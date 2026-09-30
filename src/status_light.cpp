@@ -27,8 +27,8 @@
 
 namespace StatusLight {
 
-#if defined(FREENOVE32)
-// The Freenove 3.2": its schematic puts the RGB LED on 22, 16 and 17 (common
+#if defined(FREENOVE32) || defined(FREENOVE28)
+// The Freenove 3.2" (and the 2.8" FNK0114B, same LED wiring): its schematic puts the RGB LED on 22, 16 and 17 (common
 // anode, lit low, like the Sunton's) and GPIO4 on the audio amplifier's
 // enable. Red on 4 would have switched the amp with every breath of the light.
 // Pins from PR #7 (DevOpsDAdams), checked against Freenove's schematic.

@@ -55,6 +55,7 @@
 #include <esp_heap_caps.h>
 #include "ui_diagnostics.h"   // CrashReport, used by the breadcrumb below
 #include "blackbox.h"
+#include "board_battery.h"   // BOARD_BATT_PIN boards only; empty elsewhere
 #include "gnss.h"
 #include "lora_sniffer.h"   // the watch's SX1262; inline no-ops elsewhere
 #include "wardrive.h"
@@ -114,6 +115,26 @@ static bool takeBootCheckSkip() {
 // twatchRadioHealTick().
 static const uint32_t HEAL_MAGIC = 0x4EA10000u;
 RTC_NOINIT_ATTR static uint32_t g_healWord;
+#if defined(BOARD_BATT_PIN)
+// Set by batteryShutdown() before it sleeps on a flat cell. The board wakes
+// on a timer to look again: with the charger plugged in (4.5 V at BAT+) or a
+// cell that has recovered well above flat it boots normally; otherwise it
+// goes straight back to sleep, before the display or the radios start.
+RTC_NOINIT_ATTR static uint32_t g_flatWord;
+static const uint32_t FLAT_MAGIC      = 0xF1A70000u;
+static const uint64_t FLAT_RECHECK_US = 300ULL * 1000000ULL;   // five minutes
+static void flatBootCheck() {
+    if (g_flatWord != FLAT_MAGIC) return;
+    if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) { g_flatWord = 0; return; }   // power cycled, reset pressed: a person wants it on
+    analogSetPinAttenuation(BOARD_BATT_PIN, ADC_11db);
+    uint32_t sum = 0;
+    for (int i = 0; i < 16; i++) sum += analogReadMilliVolts(BOARD_BATT_PIN);
+    const uint32_t mv = sum / 16 * BOARD_BATT_X1000 / 1000;
+    if (mv >= 3700) { g_flatWord = 0; return; }   // charger on (4.5 V), or a cell charged enough to run
+    esp_sleep_enable_timer_wakeup(FLAT_RECHECK_US);
+    esp_deep_sleep_start();
+}
+#endif
 static uint8_t s_healCount = 0;   // this boot's view of it, read once in setup
 static void takeHealCount() {
     const uint32_t v = g_healWord;
@@ -2809,6 +2830,9 @@ static void printBootBanner() {
 static void wardriveBegin();
 #endif
 void setup() {
+#if defined(BOARD_BATT_PIN)
+    flatBootCheck();   // asleep on a flat cell? back to sleep before anything else wakes up
+#endif
     // Before anything else can allocate: the breadcrumb has to be read out
     // while it is still the previous life's, not this one's.
     crashReportInit();
@@ -3302,6 +3326,9 @@ void setup() {
         }
         BlackBox::noteBoot(br);
     }
+#if defined(BOARD_BATT_PIN)
+    BoardBattery::begin();   // after the black box, so its boot sample is kept
+#endif
 
 #if defined(TWATCH_S3)
     // The wardrive log, and its GPS if wardriving was left on.
@@ -4001,11 +4028,80 @@ static void chargeModeTick(uint32_t now) {
 }
 #endif
 
+#if defined(BOARD_BATT_PIN)
+// The cell is nearly flat: below this the board's regulator drops out and the
+// ESP32 would brown out and reboot until the charger cuts the cell off at
+// 3.0 V. Say so for a few seconds, then deep sleep. A timer wakes it every
+// five minutes to see whether the charger has been plugged in (see
+// flatBootCheck()); switching it off and on also starts it normally.
+static void batteryShutdown() {
+    const uint16_t mv = BoardBattery::mv();
+    BoardBattery::noteSample(BlackBox::BATT_WHY_TIMER);
+    Serial.printf("[batt] FLAT at %u mV: shutting down to protect the battery\n", (unsigned)mv);
+    engine.restRadios(true);
+    StatusLight::off();
+    const int w = tft.width(), h = tft.height();
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(Theme::RED, TFT_BLACK);
+    tft.setTextSize(3);
+    tft.drawString("BATTERY EMPTY", w / 2, h / 2 - 40);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextSize(2);
+    char line[24];
+    snprintf(line, sizeof line, "%u.%02u V", (unsigned)(mv / 1000), (unsigned)(mv % 1000 / 10));
+    tft.drawString(line, w / 2, h / 2);
+    tft.setTextSize(1);
+    tft.drawString("Shutting down to protect the battery.", w / 2, h / 2 + 30);
+    tft.drawString("Plug in the charger or switch off.", w / 2, h / 2 + 44);
+    tft.setTextDatum(TL_DATUM);
+    ledcWrite(BL_CH_ORIG, Settings::brightness());
+    delay(5000);
+    ledcWrite(BL_CH_ORIG, 0);
+    ledcWrite(BL_CH_CAP,  0);
+    ledcWrite(BL_CH_AWOK, 0);
+    tft.writecommand(0x28);   // DISPOFF
+    tft.writecommand(0x10);   // SLPIN
+    serialFlush();
+    g_flatWord = FLAT_MAGIC;
+    esp_sleep_enable_timer_wakeup(FLAT_RECHECK_US);
+    esp_deep_sleep_start();
+}
+
+static void boardBatteryTick(uint32_t now) {
+    BoardBattery::tick(now, !s_screenDimmed);
+    if (g_consoleBatt)    { g_consoleBatt = false;    BoardBattery::printNow(); }
+    if (g_consoleBattLog) { g_consoleBattLog = false; BoardBattery::printLog(); }
+    static char sub[24];
+    switch (BoardBattery::takeEvent()) {
+        case BoardBattery::Event::EXT_ON:
+            Theme::showToast("EXTERNAL POWER", "Charging", Theme::GREEN, 2500);
+            break;
+        case BoardBattery::Event::EXT_OFF:
+            snprintf(sub, sizeof sub, "%u%% left", (unsigned)BoardBattery::pct());
+            Theme::showToast("ON BATTERY", sub, Theme::CYAN, 2500);
+            break;
+        case BoardBattery::Event::LOW_BATTERY:
+            snprintf(sub, sizeof sub, "%u%% - charge soon", (unsigned)BoardBattery::pct());
+            Theme::showToast("BATTERY LOW", sub, Theme::AMBER, 4000);
+            if (state == AppState::CLEAR) Squachy::announce("Battery's low. Feed me.");
+            break;
+        case BoardBattery::Event::FLAT:
+            batteryShutdown();   // does not return
+            break;
+        default: break;
+    }
+}
+#endif
+
 void loop() {
     // Cheap and unconditional: available() is a register read, and this
     // is the only way in for the one serial command the firmware takes.
     Clock::pollSerial();
     runtimeTick(millis());
+#if defined(BOARD_BATT_PIN)
+    boardBatteryTick(millis());
+#endif
 #if defined(ESP32) && !defined(TWATCH_S3)
     if (g_consoleCharge) { g_consoleCharge = false; if (s_chargeMode) exitChargeMode(); else s_chargeWanted = true; }
     if (s_chargeWanted && !s_chargeMode) { s_chargeWanted = false; enterChargeMode(); }

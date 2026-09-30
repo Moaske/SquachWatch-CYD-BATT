@@ -206,7 +206,7 @@ struct Ring {
 };
 
 Ring s_boots(KIND_BOOT, 0, 2);
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(BOARD_BATT_PIN)
 // Six sectors of battery samples: 378 of them, two and a half days at one
 // every ten minutes. Taken from the detection ring, which the watch's black
 // box starts empty anyway.
@@ -254,7 +254,7 @@ bool begin() {
     if (!regionFree()) return false;
     s_boots.scan();
     s_dets.scan();
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(BOARD_BATT_PIN)
     s_batt.scan();
 #endif
     s_ready = true;
@@ -299,7 +299,7 @@ uint16_t bootNumber()     { return s_bootNo; }
 uint16_t detectionsKept() { return s_detKept; }
 
 void noteBattery(BattRecord& r) {
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(BOARD_BATT_PIN)
     if (!s_ready) return;
     r.kind = KIND_BATT;
     r.boot = s_bootNo;
@@ -310,7 +310,7 @@ void noteBattery(BattRecord& r) {
 }
 
 void forEachBattery(bool (*fn)(const BattRecord&, void*), void* ctx) {
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(BOARD_BATT_PIN)
     if (!s_ready) return;
     struct W { bool (*fn)(const BattRecord&, void*); void* ctx; } w = { fn, ctx };
     s_batt.walk([](const uint8_t* p, void* c) {
@@ -429,7 +429,7 @@ void wipe() {
     if (!s_ready) return;
     s_boots.scan();
     s_dets.scan();
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(BOARD_BATT_PIN)
     s_batt.scan();
 #endif
     s_detKept = 0;
