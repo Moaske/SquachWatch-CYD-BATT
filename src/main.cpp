@@ -115,6 +115,13 @@ static bool takeBootCheckSkip() {
 // twatchRadioHealTick().
 static const uint32_t HEAL_MAGIC = 0x4EA10000u;
 RTC_NOINIT_ATTR static uint32_t g_healWord;
+static uint8_t s_healCount = 0;   // this boot's view of it, read once in setup
+static void takeHealCount() {
+    const uint32_t v = g_healWord;
+    g_healWord = 0;
+    s_healCount = ((esp_reset_reason() == ESP_RST_DEEPSLEEP || esp_reset_reason() == ESP_RST_SW) && (v & 0xFFFF0000u) == HEAL_MAGIC) ? (uint8_t)(v & 0xFF) : 0;
+}
+#endif
 #if defined(BOARD_BATT_PIN)
 // Set by batteryShutdown() before it sleeps on a flat cell. The board wakes
 // on a timer to look again: with the charger plugged in (4.5 V at BAT+) or a
@@ -133,13 +140,6 @@ static void flatBootCheck() {
     if (mv >= 3700) { g_flatWord = 0; return; }   // charger on (4.5 V), or a cell charged enough to run
     esp_sleep_enable_timer_wakeup(FLAT_RECHECK_US);
     esp_deep_sleep_start();
-}
-#endif
-static uint8_t s_healCount = 0;   // this boot's view of it, read once in setup
-static void takeHealCount() {
-    const uint32_t v = g_healWord;
-    g_healWord = 0;
-    s_healCount = ((esp_reset_reason() == ESP_RST_DEEPSLEEP || esp_reset_reason() == ESP_RST_SW) && (v & 0xFFFF0000u) == HEAL_MAGIC) ? (uint8_t)(v & 0xFF) : 0;
 }
 #endif
 static WipeBoot takeWipeBoot() {
