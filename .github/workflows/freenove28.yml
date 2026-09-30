@@ -46,13 +46,29 @@ jobs:
         run: pip install --upgrade platformio esptool
 
       - name: Build freenove28
-        run: pio run -e freenove28
+        run: |
+          set -o pipefail
+          pio run -e freenove28 2>&1 | tee build-freenove28.log
 
       # The battery work touches shared files (the black box, the settings
       # list, the status light). The plain 2.8" CYD build must still compile
       # without any of it.
       - name: Build cyd (shared code still compiles without the battery)
-        run: pio run -e cyd
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          pio run -e cyd 2>&1 | tee build-cyd.log
+
+      # Compiler errors as annotations too, so they show on the run's summary
+      # page without opening the log.
+      - name: Report compile errors
+        if: failure()
+        run: |
+          for f in build-*.log; do
+            grep -E "error:|Error [0-9]|undefined reference" "$f" | head -20 | while IFS= read -r l; do
+              echo "::error title=$f::$l"
+            done
+          done
 
       - name: Assemble the flashable files
         run: |
