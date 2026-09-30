@@ -29,6 +29,12 @@ jobs:
           # a real version (v1.25.0-3-gabc1234) rather than a bare hash.
           fetch-depth: 0
 
+      # A fork made with "master branch only" has none of upstream's version
+      # tags. Read them from upstream (read-only, public) so the stamp reads
+      # v1.25.0-15-gabc1234 -- upstream's version plus this fork's commits.
+      - name: Fetch upstream version tags
+        run: git fetch --no-recurse-submodules --tags https://github.com/skizzophrenic/SquachWatch-CYD.git || true
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
