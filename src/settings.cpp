@@ -184,7 +184,14 @@ static uint8_t s_lightColor  = 0;    // THEME
 static uint8_t s_lightBright = 4;    // of 7
 static bool    s_remoteUpdate = false;
 static bool    s_phraseShown  = true;
-static bool    s_updateCheck  = true;
+// The Freenove 2.8" battery build is built from a fork, not released on
+// squachwatch.com, so there is never a newer version of it there to find.
+#if defined(FREENOVE28)
+static const bool UPDATE_CHECK_DEFAULT = false;
+#else
+static const bool UPDATE_CHECK_DEFAULT = true;
+#endif
+static bool    s_updateCheck  = UPDATE_CHECK_DEFAULT;
 static uint8_t s_timeZone     = 10;   // UTC in Clock's table
 static bool    s_tzChosen     = false;
 static const char* const LIGHT_IDLE_NAMES[]  = { "OFF", "BREATHE", "SOLID" };
@@ -544,7 +551,7 @@ void load() {
     // anyone who wants it.
     s_remoteUpdate = s_prefs.getBool("rmtUpd", true);
     s_phraseShown  = s_prefs.getBool("phrShow", true);
-    s_updateCheck  = s_prefs.getBool("updChk", true);
+    s_updateCheck  = s_prefs.getBool("updChk", UPDATE_CHECK_DEFAULT);
     s_timeZone     = s_prefs.getUChar("tz", 10);
     s_tzChosen     = s_prefs.getBool("tzSet", false);
     if (s_timeZone >= Clock::zoneCount()) s_timeZone = 10;

@@ -1,0 +1,110 @@
+# Builds the Freenove 2.8" battery firmware ([env:freenove28]) on every push
+# to the freenove28 branch, and keeps the result as a downloadable artifact
+# (Actions tab -> the run -> Artifacts). Nothing is released or published.
+#
+# The fork's own addition; the upstream workflows (build.yml,
+# release-flasher.yml) are untouched so syncing with upstream stays clean.
+# See docs/FREENOVE28_BATTERY.md for how to flash what this produces.
+name: Freenove 2.8 battery build
+
+on:
+  push:
+    branches: [freenove28]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch: {}
+
+concurrency:
+  group: freenove28-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags, so extra_script.py's `git describe` stamps
+          # a real version (v1.25.0-3-gabc1234) rather than a bare hash.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio esptool
+
+      - name: Build freenove28
+        run: pio run -e freenove28
+
+      # The battery work touches shared files (the black box, the settings
+      # list, the status light). The plain 2.8" CYD build must still compile
+      # without any of it.
+      - name: Build cyd (shared code still compiles without the battery)
+        run: pio run -e cyd
+
+      - name: Assemble the flashable files
+        run: |
+          set -e
+          VER="$(git describe --tags --always --dirty)"
+          OUT="freenove28-$VER"
+          mkdir -p "$OUT"
+          B=.pio/build/freenove28
+          OTADATA="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+          # The whole flash in one file, for the first install (or a rescue):
+          # bootloader, partition table, otadata and the app at their offsets.
+          # Written at 0x0 it also erases the settings (the gap at 0x9000 is
+          # NVS, and the merged image fills it with 0xFF).
+          python -m esptool --chip esp32 merge_bin \
+            -o "$OUT/freenove28-FULL-merged-0x0.bin" \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            0x1000  "$B/bootloader.bin" \
+            0x8000  "$B/partitions.bin" \
+            0xE000  "$OTADATA" \
+            0x10000 "$B/firmware.bin"
+          # The app alone, for updates: written at 0x10000 it leaves the
+          # settings, the touch calibration and the black box alone.
+          cp "$B/firmware.bin"    "$OUT/freenove28-UPDATE-app-0x10000.bin"
+          # The parts, for anyone flashing with esptool by hand.
+          mkdir -p "$OUT/parts"
+          cp "$B/bootloader.bin"  "$OUT/parts/bootloader-0x1000.bin"
+          cp "$B/partitions.bin"  "$OUT/parts/partitions-0x8000.bin"
+          cp "$OTADATA"           "$OUT/parts/otadata-0xE000.bin"
+          cat > "$OUT/FLASHING.txt" <<EOF
+          SquachWatch-CYD, Freenove FNK0114B 2.8" battery build
+          Version: $VER
+          Commit:  $GITHUB_SHA
+
+          First install (erases settings):
+            freenove28-FULL-merged-0x0.bin          at address 0x0
+
+          Updates (keeps settings):
+            freenove28-UPDATE-app-0x10000.bin       at address 0x10000
+
+          Browser flasher: https://espressif.github.io/esptool-js/
+          Connect at 115200, add the file with the address above, Program.
+          Switch the battery OFF while the board is on its own USB port.
+          EOF
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          ls -la "$OUT" "$OUT/parts"
+          # Flash use, for keeping an eye on the 1.9 MB app slot.
+          echo "App size: $(stat -c%s "$B/firmware.bin") bytes of 1966080"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: ${{ env.OUT }}
+          if-no-files-found: error
+          retention-days: 90

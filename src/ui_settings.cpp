@@ -54,6 +54,8 @@ static uint8_t s_dexCaught = 0;
 // which mode is active.
 #if defined(FREENOVE_S3)
 void boardBatteryLine(char* out, size_t n);    // main.cpp: the divider on GPIO9
+#elif defined(BOARD_BATT_PIN)
+void boardBatteryLine(char* out, size_t n);    // board_battery.cpp
 #endif
 #if defined(TWATCH_S3)
 void twatchBatteryLine(char* out, size_t n);   // main.cpp, where the power chip lives
@@ -93,7 +95,7 @@ static const SettingsRow ALL_ROWS[] = {
     SettingsRow::REPLAY_INTRO, SettingsRow::SHOW_OFF, SettingsRow::VIEW_DIARY,
     SettingsRow::BINGO, SettingsRow::DEX, SettingsRow::DESK_MODE,
     SettingsRow::POWER_SAVER,
-#if defined(ESP32) && !defined(TWATCH_S3)
+#if defined(ESP32) && !defined(TWATCH_S3) && !defined(BOARD_BATT_PIN)
     SettingsRow::CHARGE_MODE,
 #endif
     SettingsRow::SECURITY,
@@ -139,7 +141,7 @@ static const uint8_t WATCH_ROWS_N = sizeof(WATCH_ROWS) / sizeof(WATCH_ROWS[0]);
 
 // The SYSTEM page: the rarely-needed machinery, off the main list.
 static const SettingsRow SYSTEM_ROWS[] = {
-#if defined(FREENOVE_S3)
+#if defined(FREENOVE_S3) || defined(BOARD_BATT_PIN)
     SettingsRow::BOARD_BATTERY,
 #endif
 #if defined(ESP32) && !defined(TWATCH_S3)
@@ -873,7 +875,7 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             snprintf(valBuf, valBufN, "%u", (unsigned)IgnoreList::count());
             value = valBuf;
             break;
-#if defined(FREENOVE_S3)
+#if defined(FREENOVE_S3) || defined(BOARD_BATT_PIN)
         case SettingsRow::BOARD_BATTERY:
             label = "BATTERY"; boardBatteryLine(valBuf, valBufN); value = valBuf;
             break;
