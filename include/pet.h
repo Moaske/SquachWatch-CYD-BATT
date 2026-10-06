@@ -26,4 +26,18 @@ namespace Pet {
     // screen changes underneath him, so he does not reappear mid-jump on a
     // screen that has been away for a minute.
     void reset();
+
+    // C1iPPY. A catch he should have an opinion about (a DetectionType);
+    // whether a tap landed on him; a poke; and where he is, for the cursor on
+    // the boards with no touch panel. All harmless when he is not the pet.
+    void noteCatch(uint8_t type);
+    bool clippyHit(int x, int y);
+    void clippyPoke(uint32_t now);
+    bool clippyCenter(int& x, int& y);
+    // Picking him up. A touch that lands on him grabs him at once; every
+    // frame it is held drags him; letting go is a poke when the finger never
+    // went anywhere, a throw when it was still moving, and a drop otherwise.
+    void clippyGrab(int x, int y, uint32_t now);
+    void clippyDrag(int x, int y, uint32_t now);
+    void clippyRelease(uint32_t now);
 }

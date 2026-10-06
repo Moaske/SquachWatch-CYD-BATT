@@ -2,6 +2,7 @@
 #include "ui_desk.h"
 #include "clock.h"
 #include "theme.h"
+#include "privacy.h"
 #include "squachy.h"
 #include <Arduino.h>
 #include <stdio.h>
@@ -312,7 +313,9 @@ static void drawPolaroid(TFT_eSPI& t, int top, float p, uint32_t now) {
         const bool known = Mesh::peerLook(m.mac, look);
         Squachy::setOutfitPreview(known ? (int8_t)look.outfit : 0);
         Squachy::setShadesPreview(known ? (int8_t)look.shade  : 0);
+        Squachy::setAuraPreview(known && look.aura ? 1 : 0);
         Squachy::drawWaving(t, px + pw / 2, py + ph - 2, now, 0.5f, nullptr, false, 0, true, 34);
+        Squachy::setAuraPreview(-1);
         Squachy::setShadesPreview(-1);
         Squachy::setOutfitPreview(-1);
     }
@@ -368,7 +371,8 @@ static void drawAlertCard(TFT_eSPI& t, int barY, uint32_t now, bool compact, int
     printRight(ty, y + 4, c);
     // The device's own name where it has one, else the vendor; what fits.
     char who[13];
-    snprintf(who, sizeof who, compact ? "%.7s" : "%.11s", d.name[0] ? d.name : vendorText(d));
+    char pv[40];
+    snprintf(who, sizeof who, compact ? "%.7s" : "%.11s", d.name[0] ? Privacy::name(d.name, pv, sizeof pv) : vendorText(d));
     printRight(who, y + 15, Theme::WHITE);
     char sig[16];
     snprintf(sig, sizeof sig, "%d dBm", d.rssi);
@@ -750,6 +754,24 @@ bool uiDeskHitSettings(int x, int y, int screenW, int screenH) {
     int gx, gy, gs;
     gearRect(screenW, screenH, gx, gy, gs);
     return x >= gx && x <= gx + gs && y >= gy && y <= gy + gs;
+}
+
+uint8_t uiDeskStops(int screenW, int screenH, uint32_t now, int16_t* xs, int16_t* ys, uint8_t cap) {
+    uint8_t n = 0;
+    auto add = [&](int x, int y) { if (n < cap) { xs[n] = (int16_t)x; ys[n] = (int16_t)y; n++; } };
+#if SQUACH_MESH
+    if (s_msgX1 > s_msgX0) add((s_msgX0 + s_msgX1) / 2, (s_msgY0 + s_msgY1) / 2);
+#endif
+    if (uiDeskAlertUp(now)) add(s_cardX + s_cardW / 2, s_cardY + CARD_H / 2);
+    int tx, ty, tw, th, bx, bw;
+    timerRects(screenW, screenH, tx, ty, tw, th, bx, bw);
+    add(tx + tw / 2, ty + th / 2);                 // FOCUS
+    add(bx + bw / 2, ty + th / 2);                 // BACK
+    int gx, gy, gs;
+    gearRect(screenW, screenH, gx, gy, gs);
+    add(gx + gs / 2, gy + gs / 2);                 // the gear: settings
+    if (s_plateW > 0) add(s_plateX + s_plateW - s_plateW / 10, s_plateY + s_plateH / 2);   // the clock's look
+    return n;
 }
 
 bool uiDeskHitBack(int x, int y, int screenW, int screenH) {

@@ -26,6 +26,7 @@ BOARDS = {
     # goes back on hold, comment it out again rather than leaving a board here
     # that nobody means to flash.
     "a4:f0:0f:8e:3a:88": ("cyd35-fast", "3.5in, 80MHz, two-band drawing"),
+    "b0:cb:d8:02:ab:50": ("cyd35-fast", "3.5in resistive (ESP32-3248S035R), the second one (2026-10-05)"),
     "a0:f2:62:e1:29:10": ("twatch-s3",  "LilyGo T-Watch S3, native USB (COM13 is allowed for THIS MAC only)"),
     # The T-Watch S3 Plus: the S3's pins exactly, plus GPS on 41/42 and the
     # PMU rails that feed it (LilyGoLib docs/hardware, 2026-09-28). The watch
@@ -35,6 +36,20 @@ BOARDS = {
     # Sunton ESP32-2432S032C (DIYmalls, Amazon B0CLGDHS16): 3.2in ST7789 IPS,
     # GT911 capacitive touch, a battery charger. Issue #6's board. 2026-09-28.
     "14:33:5c:6c:20:b8": ("cyd32c",     "Sunton ESP32-2432S032C, 3.2in ST7789 IPS, GT911 capacitive touch"),
+    "14:33:5c:6d:22:84": ("cyd32c",     "Sunton ESP32-2432S032C, the second one (2026-09-30)"),
+    # RockBase NM-CYD-C5 (Amazon B0H1QCHMW6): a 2.8in CYD on an ESP32-C5,
+    # PR #21's board. Native USB, its MAC as the serial number. esptool prints
+    # an eight-byte MAC first for this chip; the six-byte one is "BASE MAC",
+    # which read_mac() prefers. 2026-10-02.
+    "3c:dc:75:9d:5d:20": ("nm-cyd-c5",  "RockBase NM-CYD-C5, 2.8in on an ESP32-C5, native USB"),
+    # M5Stack StickS3: ESP32-S3-PICO-1-N8R8, 135x240, no touch, native USB with
+    # its MAC as the serial number. Bring-up began 2026-10-04; the factory image
+    # was read off first.
+    "70:04:1d:da:7b:04": ("sticks3",    "M5Stack StickS3, 1.14in 135x240, no touch, native USB"),
+    # M5Stack Cardputer ADV (Stamp-S3A, no PSRAM), with an ILI9341 on its EXT
+    # header from another project of the owner's. Its old firmware was read
+    # off first. Bring-up began 2026-10-04.
+    "30:ed:a0:c8:9a:b8": ("cardputer-adv", "M5Stack Cardputer ADV, 1.14in 135x240, keyboard, native USB"),
     # 88:57:21:2e:e6:e0 runs SquachEmit, not this firmware. It is the only
     # CAPACITIVE 2.8in; to test capacitive touch, list it here as cyd-fast
     # for the test and comment it out again after (done 2026-09-21).
@@ -56,10 +71,15 @@ PIO  = os.path.join(PENV, "pio.exe")
 def read_mac(port):
     out = subprocess.run([PY, "-m", "esptool", "--port", port, "--baud", "115200", "read_mac"],
                          capture_output=True, text=True).stdout
+    mac = None
     for line in out.splitlines():
-        if line.startswith("MAC: "):
-            return line[5:].strip().lower()
-    return None
+        # A chip with an eight-byte MAC (the C5) prints that as "MAC:" and the
+        # six-byte one as "BASE MAC:"; the table is keyed on six bytes.
+        if line.startswith("BASE MAC:"):
+            return line.split(":", 1)[1].strip().lower()
+        if line.startswith("MAC: ") and mac is None:
+            mac = line[5:].strip().lower()
+    return mac
 
 
 def main():
@@ -105,6 +125,19 @@ def main():
                             "0x8000", os.path.join(build, "partitions.bin"),
                             "0xe000", boot_app0,
                             "0x10000", os.path.join(build, "firmware.bin")], cwd=ROOT)
+    elif env == "nm-cyd-c5":
+        # The C5's toolchain (pioarduino) installs its own core into whatever
+        # penv runs it, and run from the shared one it broke `pio` for every
+        # board (2026-10-02). It lives in a core dir of its own, and its
+        # installer refuses an MSys shell, so MSYSTEM is dropped from the
+        # environment it sees.
+        core = os.path.join(os.path.expanduser("~"), ".pioarduino")
+        pio  = os.path.join(core, "penv", "Scripts", "pio.exe")
+        if not os.path.exists(pio):
+            sys.exit("the C5 builds from %s; make that venv first (pip install pioarduino)" % pio)
+        e = {k: v for k, v in os.environ.items() if k != "MSYSTEM"}
+        e["PLATFORMIO_CORE_DIR"] = core
+        r = subprocess.run([pio, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT, env=e)
     else:
         r = subprocess.run([PIO, "run", "-e", build_env, "-t", "upload", "--upload-port", port], cwd=ROOT)
     sys.exit(r.returncode)

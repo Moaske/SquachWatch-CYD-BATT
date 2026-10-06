@@ -1,5 +1,6 @@
 // SquachWatch-CYD — SD log implementation
 #include "sd_log.h"
+#include "frame_push.h"   // busLock(): the card shares the panel's bus
 #include <SD.h>
 #if defined(FREENOVE_S3)
 // The Freenove S3's slot is wired for SDMMC, not SPI: every card call in this
@@ -29,8 +30,14 @@ extern TFT_eSPI tft;
 // shares its display's VSPI bus too (14/13/12, not 18/19/23) but its
 // real SD-slot CS is unconfirmed -- 5 is a placeholder guess (SD has
 // failed to mount on every real unit tested so far regardless).
+//
+// NM-CYD-C5: CS=10, on the DISPLAY's bus (SCK 6, MISO 2, MOSI 7), from
+// RockBase's connections.md. Not 5 -- GPIO5 on this board is the GPS header's
+// UART, and the card simply never answers.
 #if defined(AWOK)
     #define SD_CS_PIN 14
+#elif defined(NM_CYD_C5)
+    #define SD_CS_PIN 10
 #else
     #define SD_CS_PIN 5
 #endif
@@ -44,7 +51,7 @@ static const uint8_t SD_MAX_FILES = 2;
 
 bool SdLog::begin() {
     if (_ready) return true;
-#if defined(TWATCH_S3)
+#if defined(TWATCH_S3) || defined(SQW_SMALL)   // the Cardputer has a slot, on pins of its own: not brought up yet
     return false;   // no card slot; GPIO19/20 are the S3's USB pins
 #endif
 #if defined(CROWPANEL7)
@@ -109,6 +116,21 @@ bool SdLog::begin() {
     // that than cyd35's) -- so it keeps the plain no-args SD.begin()
     // below, same as before this fix existed.
     if (!SD.begin(SD_CS_PIN, tft.getSPIinstance(), 4000000, "/sd", SD_MAX_FILES)) {
+#elif defined(NM_CYD_C5)
+    // Same shape as cyd35 above, and for the same reason: the card is on the
+    // DISPLAY's SPI bus here (SCK 6, MISO 2, MOSI 7), so it gets TFT_eSPI's
+    // already-begun instance and nothing extra is ever attached to the bus.
+    //
+    // It matters more on this board than the comment above suggests, because
+    // -DRLPHANTOM_R sends it to the #else branch otherwise, and that branch
+    // runs SPI.begin(18, 19, 23, 5) -- pins chosen for the original CYD's
+    // dedicated SD bus. Two separate faults on a C5: those are not this
+    // board's SD pins, so the card never answers (observed:
+    // "Card Failed! cmd: 0x00" and then "no card, or it did not answer"
+    // with a working card inserted); and GPIO23 is this board's TFT_CS, so
+    // the additive GPIO-matrix attach the comment above warns about lands on
+    // the display's own chip select.
+    if (!SD.begin(SD_CS_PIN, tft.getSPIinstance(), 4000000, "/sd", SD_MAX_FILES)) {
 #elif defined(AWOK)
     if (!SD.begin(SD_CS_PIN, SPI, 4000000, "/sd", SD_MAX_FILES)) {
 #else
@@ -137,12 +159,48 @@ void SdLog::openDaily() {
     uint32_t t = millis();
     uint32_t day = t / (24UL * 60UL * 60UL * 1000UL);
     snprintf(_filename, sizeof(_filename), "/squachwatch-%lu.log", (unsigned long)day);
+#if defined(NM_CYD_C5)
+    // Say what is already on the card for today. Mounting proves the card
+    // answers; it does not prove a single row ever reached it, and until this
+    // line existed the only way to tell the two apart was to pull the card.
+    // Board-gated for the same reason as the branch in logEvent() below.
+    FramePush::busLock();
+    File f = CARD.open(_filename, FILE_READ);
+    if (f) { Serial.printf("[sd] %s: %lu bytes already\n", _filename, (unsigned long)f.size()); f.close(); }
+    else   { Serial.printf("[sd] %s: new file\n", _filename); }
+    FramePush::busUnlock();
+#endif
 }
 
 void SdLog::logEvent(const Detection& d) {
     if (!_ready) return;
+    // The card shares the panel's SPI bus on the boards that have it there;
+    // on the C5 the push runs in a task, so the write waits for a frame in
+    // flight (a no-op everywhere else).
+    FramePush::busLock();
     File f = CARD.open(_filename, FILE_APPEND);
-    if (!f) return;
+    if (!f) {
+        FramePush::busUnlock();
+#if defined(NM_CYD_C5)
+        // Once, not once per detection: a card that mounts but cannot be
+        // opened for append reads exactly like a card that was logging, and
+        // begin()'s own comment two screens up says that is the thing to
+        // avoid. A write-protected card, a full one, or a filesystem the
+        // driver mounted but cannot write all land here.
+        //
+        // Board-gated ON PURPOSE. It is worth having on every board and costs
+        // ~288 bytes of flash, but this is a board-port PR: no existing board
+        // should change by a byte on account of it. Lift the guard if you want
+        // it everywhere -- see the note in the PR description.
+        static bool said = false;
+        if (!said) {
+            said = true;
+            Serial.printf("[sd] cannot open %s for append: mounted, but nothing is being logged\n",
+                          _filename);
+        }
+#endif
+        return;
+    }
     char line[96];
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -164,15 +222,17 @@ void SdLog::logEvent(const Detection& d) {
              nameSafe);
     f.print(line);
     f.close();
+    FramePush::busUnlock();
 }
 
 void SdLog::wipe() {
     if (!_ready) return;
+    FramePush::busLock();
     // Walk the root and remove every file this firmware writes. Names are
     // /squachwatch-YYYYMMDD.log; matching on the prefix takes them all rather
     // than only today's, which is the whole point of a wipe.
     File dir = CARD.open("/");
-    if (!dir) return;
+    if (!dir) { FramePush::busUnlock(); return; }
     // Collect first, then remove: deleting while iterating openNextFile() is
     // not something the FAT driver promises to survive.
     char victims[16][32];
@@ -191,6 +251,7 @@ void SdLog::wipe() {
     }
     dir.close();
     for (int i = 0; i < n; i++) CARD.remove(victims[i]);
+    FramePush::busUnlock();
     _filename[0] = '\0';       // force a fresh openDaily() on the next event
 }
 

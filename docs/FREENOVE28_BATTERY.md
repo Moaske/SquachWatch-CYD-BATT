@@ -107,7 +107,7 @@ the Actions tab. The run's artifact, `freenove28-<version>`, holds:
 | File | Where | When |
 |---|---|---|
 | `freenove28-FULL-merged-0x0.bin` | address `0x0` | the first install, or a rescue: **erases settings** |
-| `freenove28-UPDATE-app-0x10000.bin` | address `0x10000` | every update after that: keeps settings, touch calibration and the black box |
+| `freenove28-UPDATE-app-0x10000.bin` + `parts/otadata-0xE000.bin` | `0x10000` and `0xE000` | every update after that, and the switch from an upstream build: keeps settings, touch calibration and the black box |
 | `parts/` | as named | bootloader, partition table and otadata, for esptool by hand |
 
 With [Espressif's browser flasher](https://espressif.github.io/esptool-js/):
