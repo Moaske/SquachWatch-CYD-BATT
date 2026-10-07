@@ -295,6 +295,16 @@ specification](https://developers.google.com/nearby/fast-pair/specifications/ext
 but the UUID itself is shared with non-tracker Eddystone beacons, so
 higher false-positive risk than the Samsung match above.
 
+**Service data, not the UUID list (fork addition):** an FMDN tag carries
+`0xFEAA` only as *service data* (AD type `0x16`): a 20-byte rotating ID
+leaves no room in the 31-byte advert for a service UUID list, so the
+UUID-list check alone never saw a real tag. `trackerServiceData()` reads the
+service data itself. Frame type `0x40` (or `0x41`, unwanted-tracking
+protection on) is FMDN and nothing else -- plain Eddystone beacons use
+`0x00`-`0x30` -- so a match on the frame is graded **High**; `0xFEAA` in the
+UUID list alone stays Medium. Samsung's `0xFD5A` is read from service data
+the same way.
+
 ---
 
 ## Tile trackers — `TILE` — **High confidence**

@@ -463,6 +463,20 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
             label    = uuidName(0xFFFA);
         }
 
+        // Trackers that say what they are in service data only: Google Find
+        // My Device tags and Samsung SmartTags. Neither puts its UUID in the
+        // service UUID list the check below reads, so without this a Chipolo
+        // ONE Point was never reported at all. See trackerServiceData().
+        bool fmdnFrame = false;
+        if (det.type == DetectionType::UNKNOWN) {
+            const DetectionType t = trackerServiceData(adv->getPayload().data(),
+                                                       (uint8_t)adv->getPayload().size(), &fmdnFrame, nullptr);
+            if (t != DetectionType::UNKNOWN) {
+                det.type = t;
+                label    = uuidName(t == DetectionType::GOOGLE_TAG ? 0xFEAA : 0xFD5A);
+            }
+        }
+
         // Service UUIDs
         if (det.type == DetectionType::UNKNOWN && adv->haveServiceUUID()) {
             for (int j = 0; j < adv->getServiceUUIDCount(); j++) {
@@ -526,6 +540,10 @@ class BleScanCallbacks : public NimBLEScanCallbacks {
         // none of those tables has a per-row grade, so the type's own
         // grade stands. Only the OUI table needed splitting.
         det.conf = confidenceFor(det.type);
+        // GOOGLE_TAG is Medium because 0xFEAA is shared with plain Eddystone
+        // retail beacons. An actual Find My Device frame (type 0x40/0x41) is
+        // used by nothing else, so that one is High.
+        if (det.type == DetectionType::GOOGLE_TAG && fmdnFrame) det.conf = Confidence::HIGH_CONF;
         // ...except HACKER, which is the one type deliberately holding
         // signatures of very different strength. Reaching here on anything
         // but the name means one of the exact ones matched: a service UUID
