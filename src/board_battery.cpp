@@ -32,6 +32,21 @@ const uint32_t LOW_HOLD_MS      = 30000;   // a WiFi burst sags the cell for a m
 const uint32_t CRITICAL_HOLD_MS = 15000;
 
 const uint32_t SAMPLE_MS    = 1000;
+
+// BOARD USB ("AC"): the battery switch off and the Freenove on its own USB.
+// Then nothing is on BAT+ but the board's own charger (TP4054) and the
+// 200K divider. With no cell to charge it ends its cycle at once (the 20 uA
+// the divider draws is far under its termination current), the 10 uF on
+// BAT+ sags through the divider to its recharge threshold in tens of
+// milliseconds, and it starts again: a sawtooth of roughly 4.05-4.2 V, many
+// times a second. A cell, or the BQ25185's SYS, is steady to a few tens of
+// mV. So a reading near the top that keeps swinging is "no cell, board USB".
+// Sampled once per loop pass (four reads averaged), judged once a second.
+const uint16_t USB_SWING_ON_MV  = 120;   // the swing within one second that means sawtooth
+const uint16_t USB_SWING_OFF_MV = 60;
+const uint16_t USB_TOP_MV       = 4000;  // and only near the top: a cell cannot be both low and charged
+const uint8_t  USB_ON_SECONDS   = 3;
+const uint8_t  USB_OFF_SECONDS  = 5;
 const uint32_t LOG_MS       = 600000;      // a black box sample every ten minutes, like the watch
 
 // Estimated charge from the voltage at BAT+ *under the board's own load*
@@ -54,6 +69,36 @@ uint32_t s_lastAt = 0, s_lowSince = 0, s_critSince = 0, s_logAt = 0;
 bool     s_screenOn = true;
 Event    s_event = Event::NONE;
 bool     s_begun = false;
+bool     s_usb   = false;     // board USB, no cell: see USB_SWING_ON_MV
+uint16_t s_winMin = 0xFFFF, s_winMax = 0, s_lastSwing = 0;
+uint8_t  s_usbOnRun = 0, s_usbOffRun = 0;
+
+// One quick reading per loop pass, for the swing: four reads, not sixteen,
+// so it costs well under 100 us a frame.
+void fastSample() {
+    uint32_t sum = 0;
+    for (int i = 0; i < 4; i++) sum += analogReadMilliVolts(BOARD_BATT_PIN);
+    const uint16_t mv = (uint16_t)((sum / 4) * BOARD_BATT_X1000 / 1000);
+    if (mv < s_winMin) s_winMin = mv;
+    if (mv > s_winMax) s_winMax = mv;
+}
+
+// Once a second: was that second's swing the board charger's sawtooth?
+void judgeUsb() {
+    if (s_winMax == 0) return;   // no fast samples this second
+    const uint16_t swing = s_winMax - s_winMin;
+    s_lastSwing = swing;
+    const bool saw = !s_ext && s_winMax >= USB_TOP_MV && swing >= USB_SWING_ON_MV;
+    const bool calm = s_ext || s_winMax < USB_TOP_MV - 50 || swing < USB_SWING_OFF_MV;
+    if (!s_usb) {
+        s_usbOnRun = saw ? (uint8_t)(s_usbOnRun + 1) : 0;
+        if (s_usbOnRun >= USB_ON_SECONDS) { s_usb = true; s_usbOffRun = 0; }
+    } else {
+        s_usbOffRun = calm ? (uint8_t)(s_usbOffRun + 1) : 0;
+        if (s_usbOffRun >= USB_OFF_SECONDS) { s_usb = false; s_usbOnRun = 0; }
+    }
+    s_winMin = 0xFFFF; s_winMax = 0;
+}
 
 uint16_t readMv() {
     // Sixteen reads, averaged: the ADC is noisy at the millivolt level and
@@ -111,7 +156,7 @@ void sample(uint32_t now, bool first) {
         noteSample(BlackBox::BATT_WHY_USB);
         return;
     }
-    if (s_ext || !s_present) { s_lowSince = s_critSince = 0; return; }
+    if (s_ext || s_usb || !s_present) { s_lowSince = s_critSince = 0; return; }
 
     if (s_mv >= LOW_REARM_MV) s_lowSaid = false;
     if (s_mv < LOW_MV) { if (!s_lowSince) s_lowSince = now; } else s_lowSince = 0;
@@ -150,8 +195,10 @@ void tick(uint32_t now, bool screenOn) {
         s_screenOn = screenOn;
         noteSample(BlackBox::BATT_WHY_SCREEN);
     }
+    fastSample();
     if (now - s_lastAt < SAMPLE_MS) return;
     s_lastAt = now;
+    judgeUsb();
     sample(now, false);
     if (now - s_logAt >= LOG_MS) noteSample(BlackBox::BATT_WHY_TIMER);
 }
@@ -164,6 +211,7 @@ Event takeEvent() {
 
 bool     present() { return s_present; }
 bool     ext()     { return s_ext; }
+bool     boardUsb(){ return s_usb; }
 uint16_t mv()      { return s_mv; }
 uint8_t  pct()     { return s_pct; }
 
@@ -177,21 +225,22 @@ void noteSample(uint8_t why) {
     r.epoch    = Clock::trusted() ? Clock::nowEpoch() : 0;
     r.upSec    = millis() / 1000u;
     r.cpuMhz10 = (uint8_t)(getCpuFrequencyMhz() / 10);
-    if (s_ext)      r.flags |= BlackBox::BATT_USB;   // "on the cable": here, the charger has input power
+    if (s_ext || s_usb) r.flags |= BlackBox::BATT_USB;   // external power: the charger's input, or the board's own USB
     if (s_screenOn) r.flags |= BlackBox::BATT_SCREEN_ON;
     r.flags |= BlackBox::BATT_RADIOS_ON;             // no duty cycle on this board: always listening
     BlackBox::noteBattery(r);
     static const char* const WHY[] = { "timer", "boot", "power", "screen", "radio reset", "self-heal" };
     Serial.printf("[batt] %u mV  %s  screen %s  up %lu s  (%s)\n", (unsigned)s_mv,
-                  !s_present ? "no battery" : s_ext ? "external power" : "on battery",
+                  !s_present ? "no battery" : s_ext ? "external power" : s_usb ? "board USB, no cell" : "on battery",
                   s_screenOn ? "on" : "dim", (unsigned long)r.upSec, WHY[why < 6 ? why : 0]);
 }
 
 void printNow() {
     char line[24];
     boardBatteryLine(line, sizeof line);
-    Serial.printf("[batt] %s  (filtered %u mV, last raw %u mV, %s)\n", line, (unsigned)s_mv, (unsigned)s_rawMv,
-                  !s_present ? "nothing on BAT+" : s_ext ? "external power" : "on the cell");
+    Serial.printf("[batt] %s  (filtered %u mV, last raw %u mV, swing %u mV/s, %s)\n", line, (unsigned)s_mv,
+                  (unsigned)s_rawMv, (unsigned)s_lastSwing,
+                  !s_present ? "nothing on BAT+" : s_ext ? "external power" : s_usb ? "board USB, no cell" : "on the cell");
 }
 
 void printLog() {
@@ -213,6 +262,7 @@ void boardBatteryLine(char* out, size_t n) {
     const uint16_t v = mv();
     if (!present())      snprintf(out, n, "NONE");
     else if (ext())      snprintf(out, n, "EXT POWER");
+    else if (boardUsb()) snprintf(out, n, "AC");   // no cell at all: a percent would be made up
     else if (v < LOW_MV) snprintf(out, n, "LOW %u%% %u.%02uV", (unsigned)pct(), (unsigned)(v / 1000), (unsigned)(v % 1000 / 10));
     else                 snprintf(out, n, "%u%% %u.%02uV", (unsigned)pct(), (unsigned)(v / 1000), (unsigned)(v % 1000 / 10));
 }
