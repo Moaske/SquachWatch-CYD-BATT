@@ -42,7 +42,6 @@ Event    takeEvent();                                    // the latest event, on
 
 bool     present();   // something is on BAT+ at all
 bool     ext();       // external power (reading above any cell)
-bool     boardUsb();  // the battery switched off, the board on its own USB (the charger's sawtooth)
 uint16_t mv();        // the filtered reading at BAT+, in mV
 uint8_t  pct();       // estimated charge, 0..100; meaningless while ext()
 
@@ -52,8 +51,8 @@ void     noteSample(uint8_t why);   // one sample into the black box now
 
 }  // namespace BoardBattery
 
-// The BATTERY row: "73% 3.92V", "EXT POWER", "AC" (board USB, no cell),
-// "LOW 4% 3.47V" or "NONE". Same name and shape as the Freenove S3's, so ui_settings.cpp treats
+// The SYSTEM page's BATTERY row: "73% 3.92V", "EXT POWER", "LOW 4% 3.47V" or
+// "NONE". Same name and shape as the Freenove S3's, so ui_settings.cpp treats
 // both boards alike.
 void boardBatteryLine(char* out, size_t n);
 
