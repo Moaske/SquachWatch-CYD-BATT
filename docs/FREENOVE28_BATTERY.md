@@ -52,7 +52,7 @@ cell, around the bq25185's protections.
 
 ## What the firmware shows
 
-| At BAT+ (GPIO34 × 2) | Meaning | BATTERY row (Settings → SYSTEM) |
+| At BAT+ (GPIO34 × 2) | Meaning | BATTERY row (top of Settings) |
 |---|---|---|
 | above 4.35 V | the charger has input power (charging or full) | `EXT POWER` |
 | 3.50 – 4.2 V | on the cell | `73% 3.92V` |

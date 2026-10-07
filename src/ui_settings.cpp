@@ -70,6 +70,12 @@ static const SettingsRow ALL_ROWS[] = {
     // to ten rows, so the main list carries one row that opens it.
     SettingsRow::WATCH_SETTINGS,
 #endif
+#if defined(BOARD_BATT_PIN)
+    // The battery, on its own at the very top of the main list with no
+    // heading over it: the one reading worth a glance every time this opens.
+    // See buildDisplayList() for the missing heading.
+    SettingsRow::BOARD_BATTERY,
+#endif
     SettingsRow::BORING_MODE, SettingsRow::CONFIDENCE, SettingsRow::AUTO_QUIET,
 #if defined(CROWPANEL7)
     // Beside ALERT FILTER and AUTO SNOOZE because it is about alerts: one
@@ -152,7 +158,7 @@ static const uint8_t WATCH_ROWS_N = sizeof(WATCH_ROWS) / sizeof(WATCH_ROWS[0]);
 // The SYSTEM page: the rarely-needed machinery, off the main list.
 static const SettingsRow SYSTEM_ROWS[] = {
     SettingsRow::PRIVACY,
-#if defined(FREENOVE_S3) || defined(BOARD_BATT_PIN)
+#if defined(FREENOVE_S3)   // a BOARD_BATT_PIN board has it on the main list instead
     SettingsRow::BOARD_BATTERY,
 #endif
 #if defined(ESP32) && !defined(TWATCH_S3)
@@ -375,7 +381,10 @@ static uint8_t buildDisplayList(DisplayItem* out) {
         // top of the list and read as a heading in its own right. It lives in
         // the SQUACHY cluster now, so that exemption would suppress the
         // SQUACHY header whenever APPEARANCE happened to come first in it.
-        const bool headerless = s_appearance && rows[i] == SettingsRow::BACK;
+        // And no heading over the battery at the top of the main list: it
+        // stands alone above BEHAVIOR, whose heading follows it as usual.
+        const bool headerless = (s_appearance && rows[i] == SettingsRow::BACK) ||
+                                (s_page == SettingsPage::MAIN && rows[i] == SettingsRow::BOARD_BATTERY);
         if (!headerless && (!haveLastGroup || g != lastGroup)) {
             out[count].isHeader = true;
             out[count].group = g;
