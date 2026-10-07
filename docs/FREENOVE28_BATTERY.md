@@ -31,6 +31,8 @@ board, with an on/off switch.
 5. **Charge through the Adafruit's USB-C (or VIN).** The Freenove's own USB
    port is for flashing, with the switch **off**.
 
+<img src="https://github.com/Moaske/SquachWatch-CYD-BATT/blob/freenove28/docs/FNK0114B_with_Adafruit-bq25185-charger.jpg" width="800"></img>
+
 Use the **4.5V load output, not the 3V output.** It is a power-path output:
 4.5 V whenever the charger has input power, the cell's own voltage otherwise.
 The 3.3 V output would sit under the Freenove's own regulator, and the
