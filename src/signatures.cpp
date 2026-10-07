@@ -445,6 +445,34 @@ bool isAirTagPayload(const uint8_t* payload, uint8_t len) {
     return false;
 }
 
+DetectionType trackerServiceData(const uint8_t* payload, uint8_t len, bool* fmdn, bool* utp) {
+    if (fmdn) *fmdn = false;
+    if (utp)  *utp  = false;
+    if (!payload) return DetectionType::UNKNOWN;
+    // Walk the AD structures properly -- [length][type][data...] -- rather
+    // than scanning for byte patterns: 0x16 0xAA 0xFE turns up inside other
+    // fields' data often enough to matter.
+    for (uint16_t i = 0; i + 1 < len; ) {
+        const uint8_t l = payload[i];
+        if (l == 0) break;                       // padding: the rest is empty
+        if ((uint16_t)i + 1 + l > len) break;    // a truncated structure
+        const uint8_t  type = payload[i + 1];
+        const uint8_t* d    = payload + i + 2;
+        const uint8_t  dlen = l - 1;
+        if (type == 0x16 && dlen >= 2) {         // Service Data, 16-bit UUID
+            const uint16_t uuid = (uint16_t)(d[0] | (d[1] << 8));
+            if (uuid == 0xFEAA && dlen >= 3 && (d[2] == 0x40 || d[2] == 0x41)) {
+                if (fmdn) *fmdn = true;
+                if (utp)  *utp  = (d[2] == 0x41);
+                return DetectionType::GOOGLE_TAG;
+            }
+            if (uuid == 0xFD5A) return DetectionType::SAMSUNG_TAG;
+        }
+        i += 1 + l;
+    }
+    return DetectionType::UNKNOWN;
+}
+
 Confidence confidenceFor(DetectionType t) {
     // Per docs/DETECTIONS.md. FLOCK/AXON/META/SKIMMER/CAMERA are graded
     // High there for the signature path actually active in v1.0 (the
