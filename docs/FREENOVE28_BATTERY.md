@@ -59,7 +59,6 @@ cell, around the bq25185's protections.
 | under 3.50 V (30 s) | nearly flat | `LOW 4% 3.47V`, a toast, and Squachy says so |
 | under 3.38 V (15 s) | flat | BATTERY EMPTY screen, then deep sleep |
 | under 2.5 V | nothing on BAT+ | `NONE` |
-| ~4.05–4.2 V, swinging | battery switched off, board on its own USB: its TP4054 sawtooths with no cell | `AC` |
 
 - **EXT POWER** is the whole story while the charger is plugged in: the
   bq25185 holds its output at 4.5 V, so the cell's own voltage is not visible
@@ -93,11 +92,9 @@ A `[batt]` line is printed at boot and with every sample.
 - **No charging vs. full.** The bq25185's STAT2 pin would tell the two apart
   (low while charging); wiring it to GPIO35 on the P4 connector with a 10K
   pull-up to 3.3 V would be the way, and the firmware does not read it yet.
-- **On the Freenove's own USB with the switch off** the row reads `AC`. There
-  is no wire that says so: it is recognised from the board's TP4054 cycling on
-  and off with no cell behind it (a swing of 100+ mV within a second near
-  4.1 V), so it takes about three seconds to appear. `BATT` on the console
-  shows the measured swing.
+- **On the Freenove's own USB with the switch off**, GPIO34 reads whatever
+  the Freenove's TP4054 puts on an empty BAT+ (around 4.2 V), so the row shows
+  a full-looking cell that is not there.
 - **Calibration.** The divider is taken as exactly ×2. If a multimeter on
   BAT+ disagrees with `BATT` by more than a few tens of mV, the build flag
   `-DBOARD_BATT_X1000=` trims it (2000 = ×2.000).
