@@ -57,10 +57,12 @@ static const size_t LEN_MAX     = LEN_NAMED;
 // The appearance word. Field order matches the byte map in the plan doc.
 //
 //   bits 12..15  nickname index   (4)  -- 10 in use
-//   bits  8..11  outfit index     (4)  -- 15 in use
+//   bits  8..11  outfit index     (4)  -- the low four bits of it
 //   bits  6..7   shades index     (2)  --  4 in use
 //   bit      5   custom-name flag
-//   bits  0..4   spare            (5)
+//   bit      4   outfit index, bit 4: OVER 9000 made seventeen
+//   bit      3   the Legend's aura is lit
+//   bits  0..2   spare            (3)
 //
 // SIZE is deliberately NOT here. Both Squachys are drawn at SMALL while
 // they are meeting -- that is what makes two of them fit -- so the peer's
@@ -72,13 +74,21 @@ static const size_t LEN_MAX     = LEN_NAMED;
 // 14 when the shark suit made it 15, and every visiting shark was folded
 // back to index 0 -- NONE -- on arrival.
 static const uint8_t  NICK_N   = 10;
-static const uint8_t  OUTFIT_N = 15;
+static const uint8_t  OUTFIT_N = 19;
 static const uint8_t  SHADE_N  = 4;
 
 static const uint8_t  NICK_SHIFT   = 12, NICK_BITS   = 4;
 static const uint8_t  OUTFIT_SHIFT =  8, OUTFIT_BITS = 4;
 static const uint8_t  SHADE_SHIFT  =  6, SHADE_BITS  = 2;
 static const uint16_t CUSTOM_BIT   = 1u << 5;
+// The outfit's fifth bit, from the spare ones. A board from before it ignores
+// spare bits, so it reads outfit 16 as 0 and draws a visitor in OVER 9000 as
+// plain Squachy: the wrong hat, which is the failure this format chose.
+static const uint16_t OUTFIT_HI_BIT = 1u << 4;
+// The Legend's aura, lit: he earned it, so he gets to walk into somebody
+// else's screen wearing it. Another spare bit, and a board from before it
+// draws him without the fire, which is what it did anyway.
+static const uint16_t AURA_BIT = 1u << 3;
 
 struct Peer {
     uint8_t nick;              // index into the shared NICKNAMES table
@@ -86,6 +96,8 @@ struct Peer {
     uint8_t shade;             // index into the shared SHADE_NAMES table
     bool    custom;            // true when `name` was typed, not indexed
     char    name[NAME_LEN + 1];// NUL-terminated; empty unless custom
+    bool    aura;              // the Legend's aura is lit (last, so the
+                               // five-field initialisers leave it off)
 };
 
 // Builds the advertised payload. Returns the number of bytes written, which

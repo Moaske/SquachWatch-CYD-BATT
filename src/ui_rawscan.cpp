@@ -2,6 +2,7 @@
 #include "ui_rawscan.h"
 #include "ui_scroll.h"
 #include "theme.h"
+#include "privacy.h"
 #include "squachy.h"
 #include "settings.h"
 #include <Arduino.h>
@@ -237,7 +238,7 @@ void uiRawScanTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool i
     // Only the BACKGROUND moves. Everything else on this screen still
     // begins where it did, so no content shifts.
     const int bgTop = 0;
-switch (Settings::background()) {
+if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         case Settings::Background::STARFIELD: Theme::drawStarfield(t, now, bgTop, bodyBottom); break;
         case Settings::Background::TOASTERS:   Theme::drawFlyingToasters(t, now, bgTop, bodyBottom); break;
         case Settings::Background::AQUARIUM:   Theme::drawAquarium(t, now, bgTop, bodyBottom); break;
@@ -326,13 +327,13 @@ switch (Settings::background()) {
             t.setTextSize(2);
             t.setTextColor(Theme::CYAN, Theme::BG);
             t.setCursor(4, y + topPad);
-            t.print(r->name[0] ? r->name : "(unnamed)");
+            char pv[40];
+            t.print(r->name[0] ? Privacy::name(r->name, pv, sizeof pv) : "(unnamed)");
 
             t.setTextSize(1);
             t.setTextColor(Theme::WHITE, Theme::BG);
             char mac[24];
-            snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-                     r->mac[0], r->mac[1], r->mac[2], r->mac[3], r->mac[4], r->mac[5]);
+            Privacy::mac(mac, sizeof mac, r->mac);
             t.setCursor(4, y + detailY);
             t.print(mac);
 
@@ -355,11 +356,18 @@ switch (Settings::background()) {
             t.setTextSize(2);
             t.setTextColor(Theme::CYAN, Theme::BG);
             t.setCursor(4, y + topPad);
-            t.print(eng.rawWifiSsid(idx));
+            char pv[40];
+            t.print(Privacy::name(eng.rawWifiSsid(idx), pv, sizeof pv));
 
             t.setTextSize(1);
             t.setTextColor(Theme::WHITE, Theme::BG);
             char line[24];
+#if SQW_WIFI_5G
+            if (eng.rawWifiChannel(idx) > 14)
+                snprintf(line, sizeof(line), "5G CH%u  %s", (unsigned)eng.rawWifiChannel(idx),
+                         eng.rawWifiOpen(idx) ? "OPEN" : "LOCKED");
+            else
+#endif
             snprintf(line, sizeof(line), "CH%u  %s", (unsigned)eng.rawWifiChannel(idx),
                      eng.rawWifiOpen(idx) ? "OPEN" : "LOCKED");
             t.setCursor(4, y + detailY);

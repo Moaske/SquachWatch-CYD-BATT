@@ -381,7 +381,11 @@ void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
     t.drawRect(x0, y + 1, ww, hh, PURPLE);
 }
 
-int pinnedBackH(int panelW) { return panelW >= 400 ? 36 : PINNED_BACK_H; }
+static bool s_compact = false;
+void setCompact(bool on) { s_compact = on; }
+bool compact()           { return s_compact; }
+int  listRowPad()        { return s_compact ? 5 : 10; }
+int pinnedBackH(int panelW) { return s_compact ? 18 : (panelW >= 400 ? 36 : PINNED_BACK_H); }
 
 void drawPinnedBack(TFT_eSPI& t, const char* label) {
     const int w = t.width(), h = pinnedBackH(w), y = t.height() - h;
@@ -393,7 +397,7 @@ void drawPinnedBack(TFT_eSPI& t, const char* label) {
     // second band it lands outside the buffer and draws nothing at all. A
     // strip with no label on it. Shared helpers say what they want.
     t.setTextFont(1);
-    t.setTextSize(uiMenuTextSize(t));
+    t.setTextSize(s_compact ? 1 : uiMenuTextSize(t));
     t.setTextColor(CYAN, BG);
     t.setCursor((w - t.textWidth(label)) / 2, y + (h - t.fontHeight()) / 2);
     t.print(label);
@@ -439,6 +443,7 @@ uint8_t uiTextSize(TFT_eSPI& t, uint8_t base) {
 }
 
 uint8_t uiMenuTextSize(TFT_eSPI& t) {
+    if (t.height() < 200) s_compact = true;
     return t.width() >= 400 ? 3 : 2;
 }
 
@@ -835,6 +840,23 @@ static void releaseRain() {
     if (s_rainBuf) { free(s_rainBuf); s_rainBuf = nullptr; s_rainInited = false; }
 }
 
+// TH3 0N3's door. Every half a minute to a minute, one glyph in one slow
+// column falls red -- drawn big, so it is a target and not a speck -- and a
+// tap on it earns the coat. Where it was the last frame it was drawn, and
+// when; backgroundTap() believes only the last quarter second, the same
+// freshness rule as the owl and the eye.
+//
+// The main screen says every frame whether to send it (off once the coat
+// is earned). The rain falls behind LOG, SETTINGS and the rest too, where
+// a tap goes to the screen and not the rain -- so it only falls red while
+// that word is fresh, which is to say on the main screen.
+static bool     s_redGlyphOn = false;
+static uint32_t s_redGlyphSaid = 0;
+static int      s_redX = 0, s_redY = 0;
+static uint32_t s_redAt = 0;
+static bool     s_redPending = false;
+void setRedGlyph(bool on) { s_redGlyphOn = on; s_redGlyphSaid = millis(); }
+
 void drawDigitalRain(TFT_eSPI& t, uint32_t now, int yStart, int yEnd, bool advance) {
     // Dense columns with long, smoothly-decaying trails. Glyphs are plain
     // ASCII (the default GLCD font can't render UTF-8 katakana correctly)
@@ -998,6 +1020,35 @@ void drawDigitalRain(TFT_eSPI& t, uint32_t now, int yStart, int yEnd, bool advan
     int sqCx = 0, sqHalf = 0, sqTop = 0, sqBot = 0;
     const bool sqHere = Squachy::lastFootprint(sqCx, sqHalf, sqTop, sqBot);
 
+    // The red glyph: which column carries it, when it started, when the next.
+    // Picked from the columns whose heads have just come in at the top, the
+    // slowest of them, and never one falling behind him.
+    static int      redCol = -1;
+    static uint32_t redFrom = 0, redNext = 0;
+    const bool redHere = s_redGlyphOn && s_redGlyphSaid && (uint32_t)(millis() - s_redGlyphSaid) < 500u;
+    if (!redHere) redCol = -1;
+    if (advance && redHere) {
+        if (redCol >= 0 && (redCol >= cols ||
+                            yPos[redCol] - 16 >= yEnd || now - redFrom > 12000u)) redCol = -1;
+        if (redCol < 0) {
+            if (!redNext) redNext = now + 20000u + (uint32_t)random(0, 20000);
+            else if (now >= redNext) {
+                int best = -1;
+                for (int i = 0; i < cols; i++) {
+                    if (yPos[i] < yStart + 16 || yPos[i] > yStart + 70) continue;
+                    const int d = 3 + i * SPACING - sqCx;
+                    if (sqHere && (d < 0 ? -d : d) < sqHalf + 18) continue;
+                    if (best < 0 || ySpeed[i] > ySpeed[best]) best = i;
+                }
+                if (best >= 0) {
+                    redCol = best; redFrom = now;
+                    redNext = now + 30000u + (uint32_t)random(0, 30000);
+                }
+            }
+        }
+    }
+    int redX = -1, redY = 0;
+
     // Full-band clear every frame, same as every other background style.
     // Without it a column that just wrapped skips its narrow vertical strip
     // for several frames, and nothing else ever repaints that strip -- so
@@ -1149,7 +1200,20 @@ void drawDigitalRain(TFT_eSPI& t, uint32_t now, int yStart, int yEnd, bool advan
             t.setTextColor(fg, bg);
             t.setCursor(x, ry);
             t.print(buf);
+            if (i == redCol && j == 2) { redX = x; redY = ry; }
         }
+    }
+    // Over the column, twice the size, in red with a dark red glow. The
+    // glyph itself is whatever that cell is showing.
+    if (redX >= 0) {
+        const char rb[2] = { GLYPHS[charBuf[redCol][2]], 0 };
+        const int gx = redX - 3, gy = redY - 4;
+        t.setTextSize(2);
+        t.setTextColor(t.color565(255, 40, 40), t.color565(90, 0, 0));
+        t.setCursor(gx, gy);
+        t.print(rb);
+        t.setTextSize(1);
+        s_redX = gx + 6; s_redY = gy + 8; s_redAt = now ? now : 1;
     }
 
     // Grow-and-fade glyphs. Size steps 1 -> 2 -> 3 over the life while the
@@ -2245,6 +2309,8 @@ static void drawMowinManAt(TFT_eSPI& t, int x, int baseY, uint32_t now, float sc
 
 // Defined further down, next to backgroundTap() which consumes it.
 static void publishGoldToaster(int cx, int cy, int hw, int hh, uint32_t now);
+static void publishFlockToaster(uint8_t i, int cx, int cy, int hw, int hh, uint32_t now);
+static int8_t s_flockTaken = -1;     // a toaster tapped three times, to be dropped from the flock
 
 void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     static const uint8_t N = 5;
@@ -2502,6 +2568,9 @@ void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     for (uint8_t i = 0; i < N; i++) {
         tx[i] += (0.6f + (float)(i % 3) * 0.25f) * tscale[i];
         ty[i] -= (0.15f + (float)(i % 2) * 0.1f) * tscale[i];
+        // One tapped three times leaves the flock (see backgroundTap): it
+        // is respawned at once, and the pet it became takes over from here.
+        if (s_flockTaken == (int8_t)i) { s_flockTaken = -1; tx[i] = (float)w + 50.0f; }
         if (tx[i] > w + 40 || ty[i] < (float)yStart - 44) {
             tx[i]     = (float)(-random(0, 40) - 70);
             ty[i]     = (float)random(yStart + 12, yEnd - 12);
@@ -2515,6 +2584,9 @@ void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         // every toaster on every frame costs a couple of compares.
         Squachy::toasterNear((int)tx[i], (int)ty[i]);
         drawToasterAt(t, (int)tx[i], (int)ty[i], now, tcol[i], tscale[i]);
+        if (tcol[i] != goldCol && tx[i] >= 0.0f && tx[i] + 44.0f * tscale[i] <= (float)w)
+            publishFlockToaster(i, (int)tx[i] + (int)(22.0f * tscale[i]), (int)ty[i] + (int)(15.0f * tscale[i]),
+                                (int)(22.0f * tscale[i]), (int)(15.0f * tscale[i]), now);
         if (tcol[i] == goldCol) {
             // Publish the body's centre so a tap can find it. Radius covers
             // the body, not the wings -- the wings sweep and a hit box that
@@ -2689,19 +2761,86 @@ static uint16_t ditherRGB(TFT_eSPI& t, float r, float g, float b, uint8_t cell) 
     return t.color565((uint8_t)rr, (uint8_t)gg, (uint8_t)bb);
 }
 
+// The same dither for colours already worked out in whole numbers.
+static uint16_t ditherRGBi(TFT_eSPI& t, int r, int g, int b, uint8_t cell) {
+    static const int8_t BAYER[16] = { -8,  0, -6,  2,
+                                       4, -4,  6, -2,
+                                      -5,  3, -7,  1,
+                                       7, -1,  5, -3 };
+    const int d = BAYER[cell & 15];
+    int rr = r + d * 2;
+    int gg = g + d * 2;
+    int bb = b + d * 4;
+    if (rr < 0) rr = 0; else if (rr > 255) rr = 255;
+    if (gg < 0) gg = 0; else if (gg > 255) gg = 255;
+    if (bb < 0) bb = 0; else if (bb > 255) bb = 255;
+    return t.color565((uint8_t)rr, (uint8_t)gg, (uint8_t)bb);
+}
+
+// sin() in whole numbers: the angle is a sixteen-bit turn (65536 = once
+// round), the result is sin x 256. A quarter wave of 65 entries and a
+// straight line between them: within half a percent of the real thing.
+//
+// Here because the aquarium calls sin a thousand times a frame -- per row
+// for the light shafts, per column for the waterline, per slice of every
+// fish -- and the ESP32-C5 has no floating-point unit. On it, every one of
+// those was a few hundred instructions of software arithmetic, and the
+// tank drew at eight frames a second (bg 77 ms, 2026-10-02). The Xtensa
+// boards have the unit and never noticed; this costs them nothing either.
+static int isin256(uint16_t a) {
+    static const uint16_t Q[65] = {
+          0,   6,  13,  19,  25,  31,  38,  44,  50,  56,  62,  68,  74,  80,  86,  92,
+         98, 104, 109, 115, 121, 126, 132, 137, 142, 147, 152, 157, 162, 167, 172, 177,
+        181, 185, 190, 194, 198, 202, 206, 209, 213, 216, 220, 223, 226, 229, 231, 234,
+        237, 239, 241, 243, 245, 247, 248, 250, 251, 252, 253, 254, 255, 255, 256, 256, 256 };
+    const uint16_t q = a & 0x3FFF;                        // position within the quarter
+    const uint16_t i = (a & 0x4000) ? (0x3FFF - q) : q;  // second and fourth quarters run back
+    const int lo = Q[i >> 8], hi = Q[(i >> 8) + 1];
+    const int v  = lo + (((hi - lo) * (i & 0xFF)) >> 8);
+    return (a & 0x8000) ? -v : v;
+}
+static inline int icos256(uint16_t a) { return isin256((uint16_t)(a + 0x4000)); }
+// Radians to a sixteen-bit turn, for the small phases the tank keeps in
+// radians. Not for the clock: millis() / 900 in radians overflows this.
+static inline uint16_t turn16(float rad) { return (uint16_t)(int32_t)(rad * 10430.378f); }
+// The clock's angle instead: sin(now / divisor) wants now x 65536 / (divisor x 2 pi),
+// done in 64-bit integers so a board up for weeks wraps cleanly.
+static inline uint16_t turnOf(uint32_t now, float divisor) {
+    const uint32_t k16 = (uint32_t)(4294967296.0f / (divisor * 6.2831853f));
+    return (uint16_t)(((uint64_t)now * k16) >> 16);
+}
+
 // Water colour at a given row. The gradient was being open-coded in
 // four places with the same magic numbers; a fish that hazes toward a
 // slightly different blue than the water it is swimming in stops
 // disappearing into the distance, which is the entire point of the
 // haze, so they have to agree exactly.
 static uint16_t aquaWaterAt(TFT_eSPI& t, int y, int yStart, int bandH) {
-    float d = (float)(y - yStart) / (float)bandH;
-    if (d < 0.0f) d = 0.0f;
-    if (d > 1.0f) d = 1.0f;
-    const float lit = 1.0f - d;
-    return t.color565((uint8_t)(4  + lit *  7),
-                      (uint8_t)(30 + lit * 30),
-                      (uint8_t)(44 + lit * 32));
+    int lit = 256 - ((y - yStart) * 256) / bandH;          // 256 at the surface, 0 on the floor
+    if (lit < 0) lit = 0;
+    if (lit > 256) lit = 256;
+    return t.color565((uint8_t)(4  + ((lit *  7) >> 8)),
+                      (uint8_t)(30 + ((lit * 30) >> 8)),
+                      (uint8_t)(44 + ((lit * 32) >> 8)));
+}
+
+static float fishProfile(uint8_t species, float u);
+// fishProfile() sampled at 33 points per species, x 256, so a fish costs
+// an array read per slice instead of a powf(). Filled on first use.
+static int fishProfile256(uint8_t species, int i, int n) {
+    static int16_t FP[3][33];
+    static bool    inited = false;
+    if (!inited) {
+        for (uint8_t sp = 0; sp < 3; sp++)
+            for (int k = 0; k <= 32; k++) FP[sp][k] = (int16_t)(fishProfile(sp, (float)k / 32.0f) * 256.0f);
+        inited = true;
+    }
+    if (species > 2) species = 0;
+    // u = i / (n - 1), on the 33-point table, straight line between points.
+    const int u32 = (n > 1) ? (i * 32 * 256) / (n - 1) : 0;    // u x 32 x 256
+    int k = u32 >> 8; if (k > 31) k = 31;
+    const int f = u32 & 0xFF;
+    return FP[species][k] + (((FP[species][k + 1] - FP[species][k]) * f) >> 8);
 }
 
 // Body half-height at u (0 = snout, 1 = tail base), per species. Each
@@ -2751,13 +2890,26 @@ static void drawFishAt(TFT_eSPI& t, int cx, int cy, int8_t swim, int s,
     auto xAt    = [&](float u) { return (float)snoutX + (float)aft * u * L; };
     auto yAt    = [&](float u) { return (float)cy + waveAt(u); };
 
-    for (int i = 0; i < NSL; i++) {
-        const float u  = (float)i / (float)(NSL - 1);
-        const float hh = fishProfile(species, u) * (float)s;
-        if (hh < 0.5f) continue;
-        const int x = (int)xAt(u), yc = (int)yAt(u), h = (int)hh;
-        t.drawFastVLine(x, yc - h, h, back);
-        t.drawFastVLine(x, yc, h + 1, belly);
+    // The slices, in whole numbers: a table read for the profile and the
+    // integer sine for the flex, where it was a powf() and a sinf() per
+    // slice (see isin256). The fins and the eye below are a handful of
+    // calls per fish and keep the float forms.
+    {
+        const uint16_t ph16 = (uint16_t)(turnOf(now, 150.0f) + turn16(phase));
+        const uint16_t du16 = (uint16_t)(43808 / (NSL > 1 ? NSL - 1 : 1));  // 4.2 rad per unit of u, per slice
+        const int      L256 = (int)(L * 256.0f);
+        for (int i = 0; i < NSL; i++) {
+            const int hh = (fishProfile256(species, i, NSL) * s) >> 8;
+            if (hh < 1) continue;                                     // the float form skipped under half a pixel
+            // u x 256, then the flex: sin(ph - 4.2u) x (0.25 + u^2 s 0.40).
+            const int u256 = (NSL > 1) ? (i * 256) / (NSL - 1) : 0;
+            const int amp256 = 64 + ((u256 * u256 >> 8) * s * 102 >> 8);
+            const int wave = (isin256((uint16_t)(ph16 - (uint16_t)(i * du16))) * amp256) >> 16;
+            const int x  = snoutX + aft * ((u256 * L256) >> 16);
+            const int yc = cy + wave;
+            t.drawFastVLine(x, yc - hh, hh, back);
+            t.drawFastVLine(x, yc, hh + 1, belly);
+        }
     }
 
     // Forked caudal fin -- two lobes meeting at the peduncle, which is
@@ -3078,9 +3230,21 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         }
         rayInited = true;
     }
+    // Each shaft's sway is one sine per FRAME, here, not one per row: it
+    // does not depend on the row. Everything below is whole numbers, most of
+    // them x 256 (see isin256 for why).
+    int rayC256[NRAY];                                    // centre at the surface, x 256
+    for (uint8_t i = 0; i < NRAY; i++)
+        rayC256[i] = (int)((rayX[i] + sinf((float)now * raySpd[i] + (float)i * 1.7f) * 16.0f) * 256.0f);
+    // How far into a shaft each nested span is lit: fade x (1 - frac)^2 x 3
+    // for frac = 1, 0.75, 0.5, 0.25, x 256. The outermost is zero and skipped.
+    static const int KK256[4] = { 0, 48, 192, 432 };
+    // The vignette's five darkenings, (1 - v) x 256 for v = 0.05 + 0.065 k.
+    static const int VIG256[5] = { 243, 227, 210, 193, 177 };
     for (int y = DrawBand::top(yStart); y < DrawBand::bot(yEnd); y++) {
-        const float d   = (float)(y - yStart) / (float)bandH;   // 0 surface, 1 floor
-        const float lit = 1.0f - d;
+        const int dd   = y - yStart;
+        const int d256 = (dd * 256) / bandH;                 // 0 surface, 256 floor
+        const int lit  = 256 - d256;
         // A narrow ramp, deliberately. Widening it to buy quantisation
         // levels backfired: a broad range crosses several RGB332
         // boundaries, and each crossing is a visible plateau -- at one
@@ -3092,36 +3256,34 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         // result is nearly flat, which is the correct answer for
         // something whose job is to sit behind the UI: this is a
         // background, not a showpiece gradient.
-        const float baseR =  4.0f + lit *  7.0f;
-        const float baseG = 30.0f + lit * 30.0f;
-        const float baseB = 44.0f + lit * 32.0f;
+        const int baseR =  4 * 256 + lit *  7;              // x 256
+        const int baseG = 30 * 256 + lit * 30;
+        const int baseB = 44 * 256 + lit * 32;
         // One phase per row: the gradient is vertical, so this is where
         // the dither has to act.
         const uint8_t cell = (uint8_t)(y & 15);
-        t.drawFastHLine(0, y, w, ditherRGB(t, baseR, baseG, baseB, cell));
+        t.drawFastHLine(0, y, w, ditherRGBi(t, baseR >> 8, baseG >> 8, baseB >> 8, cell));
 
         // Shafts, as a few nested spans per ray rather than one flat
         // band -- a single span gave each shaft a hard edge that the
         // quantisation then made into a visible rectangle.
-        if (d < 0.60f) {
-            const float dd    = (float)(y - yStart);
-            const float fade  = (1.0f - d / 0.60f) * 0.20f;
+        if (d256 < 154) {                                    // the top 60% of the tank
+            const int fade256 = ((154 - d256) * 256 / 154) * 51 >> 8;   // (1 - d/0.6) x 0.20, x 256
             for (uint8_t i = 0; i < NRAY; i++) {
-                const float rc = rayX[i] + sinf((float)now * raySpd[i] + (float)i * 1.7f) * 16.0f + dd * 0.30f;
-                const float rh = rayW[i] + dd * 0.16f;
-                for (uint8_t k = 0; k < 4; k++) {
-                    const float frac = 1.0f - (float)k * 0.25f;     // outer -> inner
-                    const float kk   = fade * (1.0f - frac) * (1.0f - frac) * 3.0f;
-                    if (kk < 0.02f) continue;
-                    const int hw = (int)(rh * frac);
-                    int xs = (int)rc - hw, xe = (int)rc + hw;
+                const int rc = (rayC256[i] + dd * 77) >> 8;             // leans 0.30 px per row
+                const int rh256 = (int)(rayW[i] * 256.0f) + dd * 41;    // widens 0.16 px per row
+                for (uint8_t k = 1; k < 4; k++) {
+                    const int kk256 = (fade256 * KK256[k]) >> 8;
+                    if (kk256 < 5) continue;                             // under 0.02: too faint to draw
+                    const int hw = (rh256 * (4 - k)) >> 10;             // rh x frac, frac = 1 - k/4
+                    int xs = rc - hw, xe = rc + hw;
                     if (xs < 0) xs = 0;
                     if (xe > w) xe = w;
                     if (xe <= xs) continue;
                     t.drawFastHLine(xs, y, xe - xs,
-                                    ditherRGB(t, baseR + (180.0f - baseR) * kk,
-                                                 baseG + (240.0f - baseG) * kk,
-                                                 baseB + (255.0f - baseB) * kk, cell));
+                                    ditherRGBi(t, (baseR + (((180 * 256 - baseR) * kk256) >> 8)) >> 8,
+                                                  (baseG + (((240 * 256 - baseG) * kk256) >> 8)) >> 8,
+                                                  (baseB + (((255 * 256 - baseB) * kk256) >> 8)) >> 8, cell));
                 }
             }
         }
@@ -3131,10 +3293,9 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         for (uint8_t k = 0; k < 5; k++) {
             const int   ww = (w * (6 - k)) / 40;
             if (ww < 1) continue;
-            const float v  = 0.05f + (float)k * 0.065f;
-            const uint16_t vc = ditherRGB(t, baseR * (1.0f - v),
-                                             baseG * (1.0f - v),
-                                             baseB * (1.0f - v), cell);
+            const uint16_t vc = ditherRGBi(t, (baseR * VIG256[k]) >> 16,
+                                              (baseG * VIG256[k]) >> 16,
+                                              (baseB * VIG256[k]) >> 16, cell);
             t.drawFastHLine(0, y, ww, vc);
             t.drawFastHLine(w - ww, y, ww, vc);
         }
@@ -3153,16 +3314,28 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // rates, so the crest never repeats on a fixed pitch. A dead-level
     // top edge is what was reading as "a rectangle of blue" instead of
     // the underside of water.
-    for (int x = 0; x < w; x += 2) {
-        const float surf = sinf((float)x * 0.055f + (float)now / 900.0f) * 1.6f
-                         + sinf((float)x * 0.019f - (float)now / 1500.0f) * 1.1f;
-        const int wy = yStart + 2 + (int)surf;
-        for (uint8_t k = 0; k < 2; k++) {
-            const int yy = wy + k;
-            if (yy < yStart || yy >= yEnd) continue;
-            const float ph  = (float)x * 0.09f + (float)now / (260.0f + k * 90.0f);
-            const uint8_t a = (uint8_t)(26 + 46 * (0.5f + 0.5f * sinf(ph)));
-            t.drawFastHLine(x, yy, 2, blend(t.color565(10, 70, 110), rayCol, a));
+    // Four sines per column became four table reads: the phases that move
+    // with time are worked out once here, as sixteen-bit turns, and the per
+    // column parts are a multiply each.
+    {
+        const uint16_t t900  = turnOf(now, 900.0f);
+        const uint16_t t1500 = turnOf(now, 1500.0f);
+        const uint16_t t260  = turnOf(now, 260.0f);
+        const uint16_t t350  = turnOf(now, 350.0f);
+        const uint16_t waterDark = t.color565(10, 70, 110);
+        for (int x = 0; x < w; x += 2) {
+            // 0.055 and 0.019 rad per pixel are 574 and 198 turn-units.
+            const int surf = (isin256((uint16_t)(x * 574 + t900)) * 410           // x 1.6
+                            + isin256((uint16_t)(x * 198 - t1500)) * 282) >> 16;  // x 1.1
+            const int wy = yStart + 2 + surf;
+            for (uint8_t k = 0; k < 2; k++) {
+                const int yy = wy + k;
+                if (yy < yStart || yy >= yEnd) continue;
+                // 26 + 46 (0.5 + 0.5 sin): 49 + 23 sin.
+                const int sv = isin256((uint16_t)(x * 939 + (k ? t350 : t260)));  // 0.09 rad per pixel
+                const uint8_t a = (uint8_t)(49 + ((23 * sv) >> 8));
+                t.drawFastHLine(x, yy, 2, blend(waterDark, rayCol, a));
+            }
         }
     }
 
@@ -3181,13 +3354,14 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         }
         snowInited = true;
     }
+    const uint16_t snowT = turnOf(now, 1400.0f);
     for (uint8_t i = 0; i < NSNOW; i++) {
         snowY[i] += 0.10f + (float)(i % 3) * 0.05f;
         if (snowY[i] > (float)yEnd) {
             snowY[i] = (float)yStart;
             snowX[i] = (float)random(0, w);
         }
-        const int px = (int)(snowX[i] + sinf((float)now / 1400.0f + snowPh[i]) * 5.0f);
+        const int px = (int)snowX[i] + ((isin256((uint16_t)(snowT + turn16(snowPh[i]))) * 5) >> 8);
         const int py = (int)snowY[i];
         if (px < 0 || px >= w) continue;
         const uint16_t waterC = aquaWaterAt(t, py, yStart, bandH);
@@ -3215,6 +3389,7 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         // Caustics brighten and dim together as the surface above moves.
         const float breathe = 0.72f + 0.28f * sinf((float)now / 1700.0f);
         const uint16_t causticCol = t.color565(138, 202, 206);
+        const int suI = (int)su;
         for (int y = DrawBand::top(floorTop); y < DrawBand::bot(yEnd); y++) {
             const float near = (float)(y - floorTop) / (float)(yEnd - floorTop); // 0 back, 1 front
             const float z    = 1.0f / (0.20f + near * 0.80f);
@@ -3231,14 +3406,19 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             t.drawFastHLine(0, y, w, sand);
 
             const int v = (int)(z * 14.0f + sv) & (CAUSTIC_N - 1);
+            // The per-pixel work in whole numbers: the row's perspective
+            // scale x 256 for the tile lookup, and the row's brightness x 256
+            // for the light. A float row, an integer pixel.
+            const int zq  = (int)(z * 0.42f * 256.0f);
+            const int lit = (int)(breathe * (0.45f + near * 0.55f) * 0.26f * 256.0f);
             for (int x = 0; x < w; x += 2) {
-                const int u = (int)((float)(x - w / 2) * z * 0.42f + su) & (CAUSTIC_N - 1);
+                const int u = ((((x - w / 2) * zq) >> 8) + suI) & (CAUSTIC_N - 1);
                 const uint8_t c = CAUSTIC_TILE[v * CAUSTIC_N + u];
                 if (c < 30) continue;
                 // Light reaching the floor falls off toward the back.
-                const uint8_t a = (uint8_t)(c * breathe * (0.45f + near * 0.55f) * 0.26f);
+                const int a = (c * lit) >> 8;
                 if (a < 8) continue;
-                t.drawFastHLine(x, y, 2, blend(sand, causticCol, a));
+                t.drawFastHLine(x, y, 2, blend(sand, causticCol, (uint8_t)a));
             }
         }
         // Where the floor meets the water, a soft lip rather than a cut.
@@ -3565,6 +3745,73 @@ void drawAquarium(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     }
 }
 
+// ---- XYZZY ----------------------------------------------------------------
+// The magic word from the first adventure game. Every so often the terminal
+// types it, large, either side of Squachy, and holds it for a few seconds.
+// Tap it three times (three appearances) and consumeXyzzy() reports each
+// one; the third is the YZZERD unlock.
+//
+// Either side of him, not centred like the banner below: he stands in the
+// middle of this band and a centred word is behind him.
+static const uint32_t XYZZY_SHOW_MS = 3500;
+static const uint8_t  XYZZY_NEEDED  = 3;
+static uint32_t s_xyzzyNextAt = 0, s_xyzzyStart = 0, s_xyzzyHitAt = 0;
+// Where the word is RIGHT NOW, so a tap can find it -- same shape as the
+// lodge and the eye: published every frame it is up, stale after 250 ms.
+static int      s_xyzzyX[2] = { 0, 0 }, s_xyzzyY = 0, s_xyzzyHW = 0, s_xyzzyHH = 0;
+static uint32_t s_xyzzyAt = 0;
+static uint8_t  s_xyzzyTaps = 0, s_xyzzyPending = 0;
+
+uint8_t consumeXyzzy() {
+    const uint8_t n = s_xyzzyPending;
+    s_xyzzyPending = 0;
+    return n;
+}
+
+// Bring the word up now rather than on its own clock: the console's XYZZY
+// command and the emulator, so the unlock can be tested without waiting.
+void summonXyzzy() { if (!s_xyzzyStart) s_xyzzyNextAt = 1; }
+
+static void drawXyzzy(TFT_eSPI& t, uint32_t now, int yStart, int bandH) {
+    if (!s_xyzzyNextAt) s_xyzzyNextAt = now + (uint32_t)random(12000, 24000);
+    if (!s_xyzzyStart) {
+        if (now < s_xyzzyNextAt) return;
+        s_xyzzyStart = now ? now : 1;
+        s_xyzzyHitAt = 0;
+    }
+    const bool hit = s_xyzzyHitAt != 0;
+    if (hit ? (now - s_xyzzyHitAt > 450) : (now - s_xyzzyStart > XYZZY_SHOW_MS)) {
+        s_xyzzyStart  = 0;
+        s_xyzzyHitAt  = 0;
+        s_xyzzyNextAt = now + (uint32_t)random(14000, 28000);
+        return;
+    }
+    const int w  = t.width();
+    const int sz = (w >= 300) ? 2 : 1;
+    const int cw = 6 * sz * 5, ch = 8 * sz;              // "XYZZY"
+    const int cy = yStart + bandH / 3;
+    // Tapped: it flashes inverted, then goes. Otherwise yellow on the dark,
+    // with a cursor blinking after it, so it reads as typed.
+    const uint16_t ink = hit ? BG : VAPOR_YELLOW, paper = hit ? VAPOR_YELLOW : BG;
+    t.setTextSize(sz);
+    t.setTextColor(ink, paper);
+    for (uint8_t k = 0; k < 2; k++) {
+        const int cx = k == 0 ? w / 5 : w - w / 5;
+        t.fillRect(cx - cw / 2 - 4, cy - ch / 2 - 3, cw + 8 + 6 * sz, ch + 6, paper);
+        t.drawRect(cx - cw / 2 - 4, cy - ch / 2 - 3, cw + 8 + 6 * sz, ch + 6, VAPOR_YELLOW);
+        t.setCursor(cx - cw / 2, cy - ch / 2);
+        t.print("XYZZY");
+        if (!hit && ((now / 300) & 1)) t.fillRect(cx + cw / 2 + sz, cy - ch / 2, 5 * sz, ch, VAPOR_YELLOW);
+        s_xyzzyX[k] = cx + 3 * sz;
+    }
+    t.setTextSize(1);
+    if (!hit) {
+        // Generous: it is a word to be poked at, not a target to be hit.
+        s_xyzzyY = cy; s_xyzzyHW = cw / 2 + 4 + 3 * sz + 8; s_xyzzyHH = ch / 2 + 3 + 10;
+        s_xyzzyAt = now ? now : 1;
+    }
+}
+
 // Two independently-scrolling columns (different add intervals so they
 // never sync up) side by side, so the log fills the full screen width
 // instead of a narrow strip down the left.
@@ -3691,6 +3938,9 @@ void drawTerminalLog(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             flashNextAt = now + (uint32_t)random(9000, 20000);
         }
     }
+
+    // The magic word, over everything else the terminal has up.
+    drawXyzzy(t, now, yStart, bandH);
 }
 
 // ---- FIREFLIES ---------------------------------------------------------
@@ -4276,8 +4526,36 @@ static void releaseFire() {
     if (s_fireHeat) { free(s_fireHeat); s_fireHeat = nullptr; s_fireInited = false; }
 }
 
+static bool s_stillBackdrop = false;
+void setStillBackdrop(bool on) { s_stillBackdrop = on; }
+// A sun going down behind a grid, in the theme's own colours, and nothing
+// in it that depends on the clock.
+static void drawStillBackdrop(TFT_eSPI& t) {
+    const int w = t.width(), h = t.height(), horizon = h * 3 / 5;
+    t.fillRect(0, 0, w, h, BG);
+    const int cx = w / 2, r = h / 3;
+    for (int dy = -r; dy <= 0; dy++) {
+        // Bands cut out of the lower half of the sun, wider toward the horizon.
+        const int row = dy + r;
+        if (row > r / 2 && (row % 6) < (row - r / 2) / 6 + 1) continue;
+        int half = 0;
+        while ((half + 1) * (half + 1) + dy * dy <= r * r) half++;
+        t.drawFastHLine(cx - half, horizon + dy, 2 * half + 1, row < r / 2 ? AMBER : VAPOR_PINK);
+    }
+    t.drawFastHLine(0, horizon, w, VAPOR_PINK);
+    for (int y = horizon + 4, step = 4; y < h; y += step, step += 3) t.drawFastHLine(0, y, w, PURPLE);
+    for (int x = cx % 24; x < w; x += 24) t.drawFastVLine(x, horizon, h - horizon, PURPLE);
+}
+
+bool stillBackdrop(TFT_eSPI& t) {
+    if (!s_stillBackdrop || t.height() >= 200) return false;
+    drawStillBackdrop(t);
+    return true;
+}
+
 void drawActiveBackground(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                           const DetectionEngine& eng, bool advance) {
+    if (stillBackdrop(t)) return;
     const uint32_t bgT0 = micros();
     // The frame's worth of motion for every per-call stepper -- see s_animK.
     // Zero on a non-advancing call (cyd35's second band), which is also
@@ -4344,6 +4622,28 @@ static void publishGoldToaster(int cx, int cy, int hw, int hh, uint32_t now) {
 bool consumeToasterCatch() {
     if (!s_goldCaught) return false;
     s_goldCaught = false;
+    return true;
+}
+
+// The ordinary chrome toasters, the same way: where each was last drawn, so
+// a tap can tell WHICH one it hit. Three taps on the same one inside a
+// short window and it drops out of the flock as the pet. Three rather than
+// one because the gold toaster's one-tap catch is what a stray tap is
+// allowed to land; this needs to be meant.
+static const uint8_t FLOCK_N = 5;
+static int      s_flockX[FLOCK_N], s_flockY[FLOCK_N], s_flockHW[FLOCK_N], s_flockHH[FLOCK_N];
+static uint32_t s_flockAt[FLOCK_N] = {};
+static int8_t   s_flockTapIdx = -1;
+static uint8_t  s_flockTaps = 0;
+static uint32_t s_flockTapAt = 0;
+static bool     s_flockPetCaught = false;
+static void publishFlockToaster(uint8_t i, int cx, int cy, int hw, int hh, uint32_t now) {
+    if (i >= FLOCK_N) return;
+    s_flockX[i] = cx; s_flockY[i] = cy; s_flockHW[i] = hw; s_flockHH[i] = hh; s_flockAt[i] = now;
+}
+bool consumeToasterPetCatch() {
+    if (!s_flockPetCaught) return false;
+    s_flockPetCaught = false;
     return true;
 }
 
@@ -4437,6 +4737,17 @@ static uint32_t s_lodgeAt = 0;
 static uint8_t  s_lodgeKnocks = 0;
 static uint32_t s_lodgeKnockAt = 0;
 static bool     s_lodgePending = false;
+// The FIRE owl while he asks WHAT REEKS?!: where he and his bubble were the
+// last frame he asked it, and when. backgroundTap() only believes a frame
+// from the last quarter second, the same freshness rule as the eye.
+static int      s_owlX = 0, s_owlY = 0, s_owlBubX = 0, s_owlBubY = 0, s_owlBubW = 0, s_owlBubH = 0;
+static uint32_t s_owlReekAt = 0;
+static bool     s_owlReekPending = false;
+// Whether he still asks at all. main.cpp turns it off once the SHAMBLER is
+// his: the question has been answered, and a bird saying one line forever
+// is a bird nobody looks at.
+static bool     s_owlAsks = true;
+void setOwlAsks(bool on) { s_owlAsks = on; }
 
 // Where the toasters cameo is RIGHT NOW, so a tap can find him. Same shape
 // as the lodge and the starfield eye: the drawing code publishes a box each
@@ -4464,6 +4775,18 @@ static void publishLodge(int cx, int ridgeY, uint32_t now) {
 // cycle. snowLodge() reads this so each knock lights another one: the tell
 // the Starfield eye taught us a multi-step trigger cannot do without.
 uint8_t lodgeKnocks() { return s_lodgeKnocks; }
+
+bool consumeRedGlyph() {
+    if (!s_redPending) return false;
+    s_redPending = false;
+    return true;
+}
+
+bool consumeOwlReek() {
+    if (!s_owlReekPending) return false;
+    s_owlReekPending = false;
+    return true;
+}
 
 bool consumeLodgeKnock() {
     if (!s_lodgePending) return false;
@@ -4509,6 +4832,46 @@ bool backgroundTap(int x, int y, uint32_t now) {
             } else {
                 setEyeStreak(run);
             }
+            return true;
+        }
+    }
+
+    // The FIRE owl, while he is asking WHAT REEKS?!. On him -- a generous box,
+    // he is about twenty pixels of bird -- or on his bubble, which is where a
+    // finger goes when the question is the thing that caught the eye.
+    if (s_owlReekAt && (now - s_owlReekAt) <= 250) {
+        const int odx = x - s_owlX, ody = y - s_owlY;
+        const bool onOwl = odx >= -14 && odx <= 14 && ody >= -14 && ody <= 18;
+        const bool onBub = x >= s_owlBubX - 2 && x <= s_owlBubX + s_owlBubW + 2 &&
+                           y >= s_owlBubY - 2 && y <= s_owlBubY + s_owlBubH + 4;
+        if (onOwl || onBub) {
+            s_owlReekAt = 0;                      // one answer a question
+            s_owlReekPending = true;
+            return true;
+        }
+    }
+
+    // The red glyph, while it falls. Generous: it is twelve pixels of a
+    // moving letter.
+    if (s_redAt && (now - s_redAt) <= 250) {
+        const int rdx = x - s_redX, rdy = y - s_redY;
+        if (rdx >= -16 && rdx <= 16 && rdy >= -18 && rdy <= 18) {
+            s_redAt = 0;
+            s_redPending = true;
+            return true;
+        }
+    }
+
+    // XYZZY, while the terminal has it up. Either copy of the word counts.
+    if (s_xyzzyAt && (now - s_xyzzyAt) <= 250) {
+        const int xdy = y - s_xyzzyY;
+        for (uint8_t k = 0; k < 2; k++) {
+            const int xdx = x - s_xyzzyX[k];
+            if (xdx < -s_xyzzyHW || xdx > s_xyzzyHW || xdy < -s_xyzzyHH || xdy > s_xyzzyHH) continue;
+            s_xyzzyAt    = 0;                    // taken: one tap an appearance
+            s_xyzzyHitAt = now ? now : 1;
+            if (++s_xyzzyTaps >= XYZZY_NEEDED) s_xyzzyTaps = 0;
+            s_xyzzyPending = s_xyzzyTaps ? s_xyzzyTaps : XYZZY_NEEDED;
             return true;
         }
     }
@@ -4562,6 +4925,24 @@ bool backgroundTap(int x, int y, uint32_t now) {
             s_goldX = -1;               // caught: stop accepting taps on it
             return true;
         }
+    }
+
+    // An ordinary toaster: three taps on the same one, each within two and
+    // a half seconds of the last, and it is yours.
+    for (uint8_t i = 0; i < FLOCK_N; i++) {
+        if (!s_flockAt[i] || (now - s_flockAt[i]) > 250) continue;
+        const int fdx = x - s_flockX[i], fdy = y - s_flockY[i];
+        if (fdx > s_flockHW[i] || fdx < -s_flockHW[i] || fdy > s_flockHH[i] || fdy < -s_flockHH[i]) continue;
+        if (s_flockTapIdx != (int8_t)i || (now - s_flockTapAt) > 2500) s_flockTaps = 0;
+        s_flockTapIdx = (int8_t)i;
+        s_flockTapAt  = now;
+        if (++s_flockTaps >= 3) {
+            s_flockTaps = 0;
+            s_flockTaken = (int8_t)i;
+            s_flockAt[i] = 0;
+            s_flockPetCaught = true;
+        }
+        return true;
     }
 
     // Not drawn recently means not on screen.
@@ -5359,9 +5740,20 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             // it a few times. Check this stays coprime if the list
             // length changes -- a stride sharing a factor with the count
             // silently hides some of the lines forever.
+            //
+            // Every third slot is his own line instead, WHAT REEKS?!, and a
+            // tap on him while he is asking it is the SHAMBLER unlock (see
+            // backgroundTap()). Every third, not one in ten like a quip:
+            // once a minute and a half is findable; once in five minutes,
+            // at three and a half seconds a time, is not. Once the costume
+            // is earned he stops asking (setOwlAsks), and that slot goes back
+            // to an ordinary quip.
+            const uint32_t slot = now / CYCLE;
+            const bool reek = s_owlAsks && !wolfOut && (slot % 3) == 1;
             const char* q = wolfOut
                 ? SCARED[((now - s_wolfAt) / 1400) % (sizeof(SCARED) / sizeof(SCARED[0]))]
-                : QUIPS[((now / CYCLE) * 5 + 2) % NQUIP];
+                : reek ? "WHAT REEKS?!"
+                : QUIPS[(slot * 5 + 2) % NQUIP];
             t.setTextSize(1);
             const int bw = t.textWidth(q) + 8;
             // Derived, not the hard-coded 11 this used to be. Squachy's
@@ -5408,6 +5800,12 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             t.setTextColor(ink, paper);
             t.setCursor(bx + 4, by + 3);
             t.print(q);
+            if (reek) {
+                // Where he is and where his bubble is, for the tap.
+                s_owlX = owlX; s_owlY = owlY;
+                s_owlBubX = bx; s_owlBubY = by; s_owlBubW = bw; s_owlBubH = bh;
+                s_owlReekAt = now ? now : 1;
+            }
         }
     }
 
@@ -9276,7 +9674,23 @@ static void infoRects(int screenW, int screenH,
     btnY = py + ph - btnH - 8;
 }
 
+// On a compact screen the text is shown a page at a time, and GOT IT reads
+// MORE until the last one. The page goes back to the first whenever the
+// panel has not been drawn for a moment, which is how a new one opens.
+static uint8_t  s_infoPage = 0, s_infoPages = 1;
+static uint32_t s_infoDrawnAt = 0;
 bool infoPanelHitDismiss(int x, int y, int screenW, int screenH) {
+    if (s_compact) {
+        const int bw = screenW - 28, bh = 18, bx = 14, by = screenH - 4 - 4 - bh;
+        if (!(x >= bx && x <= bx + bw && y >= by && y <= by + bh)) return false;
+        static uint32_t last = 0;
+        const uint32_t now = millis();
+        if (now - last < 250) return false;     // one press, one page
+        last = now;
+        if (s_infoPage + 1 < s_infoPages) { s_infoPage++; return false; }
+        s_infoPage = 0;
+        return true;
+    }
     int px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyWander, textTop, textMaxW, btnX, btnY, btnW, btnH;
     float squachyScale;
     infoRects(screenW, screenH, px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyScale, squachyWander,
@@ -9286,6 +9700,42 @@ bool infoPanelHitDismiss(int x, int y, int screenW, int screenH) {
 
 void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
                    const char* typeName, const char* text) {
+    if (s_compact) {
+        if (now - s_infoDrawnAt > 400) s_infoPage = 0;
+        s_infoDrawnAt = now;
+        const int px = 4, py = 4, pw = w - 8, ph = h - 8;
+        t.fillRoundRect(px, py, pw, ph, 5, BG);
+        t.drawRoundRect(px, py, pw, ph, 5, PURPLE);
+        t.setTextWrap(false);
+        int ly = py + 5;
+        if (typeName) {
+            t.setTextSize(1);
+            t.setTextColor(VAPOR_PINK, BG);
+            t.setCursor(px + (pw - t.textWidth(typeName)) / 2, ly);
+            t.print(typeName);
+            ly += 12;
+        }
+        const int btnH = 18, btnY = py + ph - btnH - 4;
+        const int per = (btnY - 3 - ly) / 10;
+        static const uint8_t MAXL = 24;
+        static char lines[MAXL][48];
+        t.setTextSize(1);
+        const uint8_t n = wrapText(t, text, pw - 10, lines, MAXL);
+        s_infoPages = (uint8_t)(per > 0 ? (n + per - 1) / per : 1);
+        if (!s_infoPages) s_infoPages = 1;
+        if (s_infoPage >= s_infoPages) s_infoPage = 0;
+        t.setTextColor(WHITE, BG);
+        for (int i = s_infoPage * per; i < n && i < (s_infoPage + 1) * per; i++) {
+            t.setCursor(px + 5, ly);
+            t.print(lines[i]);
+            ly += 10;
+        }
+        char lbl[24];
+        if (s_infoPage + 1 < s_infoPages) snprintf(lbl, sizeof lbl, "[ MORE %u/%u ]", s_infoPage + 1, s_infoPages);
+        else                              snprintf(lbl, sizeof lbl, "[ GOT IT ]");
+        drawButton(t, px + 10, btnY, pw - 20, btnH, lbl, false, 1);
+        return;
+    }
     int px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyWander, textTop, textMaxW, btnX, btnY, btnW, btnH;
     float squachyScale;
     infoRects(w, h, px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyScale, squachyWander,

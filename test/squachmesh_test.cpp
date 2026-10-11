@@ -186,14 +186,70 @@ int main() {
 
     suite("Unknown indices clamp rather than refuse");
     {
-        // Four bits hold 0..15; this build has 10 nicknames and 15 outfits.
-        // A peer on newer firmware is a wrong hat, not an attack.
-        size_t n = encode(mk(15, 15, 3, nullptr), buf);
+        // Five bits hold 0..31 and this build has 19 outfits, so a peer on
+        // newer firmware can send one we do not have: a wrong hat, not an
+        // attack.
+        size_t n = encode(mk(15, 31, 3, nullptr), buf);
         ck("a payload with out-of-range indices still decodes", decode(buf, n, p));
         ck("nickname lands in range", p.nick < NICK_N);
         ck("outfit lands in range",   p.outfit < OUTFIT_N);
-        ck("the last real outfit is not clamped", OUTFIT_N == 15);
         ck("shades land in range",    p.shade < 4);
+    }
+
+    suite("The seventeenth outfit, and boards from before it");
+    {
+        ck("nineteen outfits", OUTFIT_N == 19);
+        size_t n = encode(mk(3, 16, 1, nullptr), buf);
+        ck("outfit 16 survives the trip", decode(buf, n, p) && p.outfit == 16);
+        ck("its fifth bit is a spare bit, not a new byte", n == LEN_INDEXED);
+        // What a board from before reads: the low four bits only.
+        const uint16_t w = (uint16_t)(buf[5] | ((uint16_t)buf[6] << 8));
+        ck("an older board sees outfit 0, plain Squachy", ((w >> 8) & 0x0F) == 0);
+        ck("and the rest of the word is unchanged", ((w >> 12) & 0x0F) == 3 && ((w >> 6) & 0x03) == 1);
+        n = encode(mk(3, 15, 1, nullptr), buf);
+        ck("outfit 15 sets no fifth bit", decode(buf, n, p) && p.outfit == 15 && !(buf[5] & 0x10));
+    }
+
+    suite("The eighteenth outfit, and boards from before it");
+    {
+        size_t n = encode(mk(3, 17, 1, nullptr), buf);
+        ck("outfit 17 survives the trip", decode(buf, n, p) && p.outfit == 17);
+        const uint16_t w = (uint16_t)(buf[5] | ((uint16_t)buf[6] << 8));
+        // A board with seventeen outfits sees 16|1 = 17 and clamps 17 % 17 to
+        // 0: plain Squachy, the wrong hat, as the format chose.
+        ck("its low four bits are 1 and the fifth is set", ((w >> 8) & 0x0F) == 1 && (w & 0x10));
+    }
+
+    suite("The nineteenth outfit, and boards from before it");
+    {
+        size_t n = encode(mk(3, 18, 1, nullptr), buf);
+        ck("outfit 18 survives the trip", decode(buf, n, p) && p.outfit == 18);
+        const uint16_t w = (uint16_t)(buf[5] | ((uint16_t)buf[6] << 8));
+        // A board with eighteen outfits sees 16|2 = 18 and clamps 18 % 18 to
+        // 0: plain Squachy again.
+        ck("its low four bits are 2 and the fifth is set", ((w >> 8) & 0x0F) == 2 && (w & 0x10));
+    }
+
+    suite("The aura goes visiting, and boards from before it");
+    {
+        Peer a = mk(3, 16, 1, nullptr);
+        a.aura = true;
+        size_t n = encode(a, buf);
+        ck("a lit aura survives the trip", decode(buf, n, p) && p.aura);
+        ck("it is a spare bit, not a new byte", n == LEN_INDEXED);
+        ck("and the flags byte is still zero, which older boards insist on", buf[7] == 0);
+        // What a board from before reads: every field it knows, unchanged.
+        const uint16_t w = (uint16_t)(buf[5] | ((uint16_t)buf[6] << 8));
+        ck("an older board reads the same nickname, outfit and shades",
+           ((w >> 12) & 0x0F) == 3 && ((w >> 8) & 0x0F) == 0 && (w & 0x10) && ((w >> 6) & 0x03) == 1);
+        ck("and no custom name", !(w & 0x20));
+        n = encode(mk(3, 16, 1, nullptr), buf);
+        ck("no aura sets no bit", decode(buf, n, p) && !p.aura && !(buf[5] & 0x08));
+        Peer c = mk(5, 7, 2, "ZERO COOL");
+        c.aura = true;
+        n = encode(c, buf);
+        ck("it rides with a typed name too",
+           decode(buf, n, p) && p.aura && p.custom && strcmp(p.name, "ZERO COOL") == 0);
     }
 
     suite("A rejected payload leaves the output alone");

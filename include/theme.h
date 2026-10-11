@@ -144,6 +144,20 @@ namespace Theme {
     // Takes a width rather than a display because two of its callers are hit
     // tests that are handed a screen size and nothing else.
     int pinnedBackH(int panelW);
+    // A screen under 200 rows (the StickS3's 240x135): lists keep their
+    // letters and give up the air round them -- a thinner BACK strip and
+    // tighter rows, so four fit where two did. Set by uiMenuTextSize() from
+    // the sprite it is handed, or outright by a board that knows.
+    // The Cardputer's EXT SCREEN: with the moving background on the big
+    // panel, a compact screen's backdrop is one still picture instead -- a
+    // menu that never changes is a menu that is never re-sent.
+    void setStillBackdrop(bool on);
+    // Draws it and says so, when it is on and `t` is a compact screen; the
+    // caller skips its own moving background then.
+    bool stillBackdrop(TFT_eSPI& t);
+    void setCompact(bool on);
+    bool compact();
+    int  listRowPad();          // added to the font height for a list row
     void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color);
 
     // The face speech bubbles are set in. Chosen at compile time by
@@ -490,6 +504,9 @@ namespace Theme {
     // TOASTERS background. Same consume-once contract as the werewolf
     // summon above; main.cpp turns it into an outfit unlock.
     bool consumeToasterCatch();
+    // ...and after the player has tapped the same ordinary chrome toaster
+    // three times in a row: it drops out of the flock and becomes the pet.
+    bool consumeToasterPetCatch();
 
     // The Aquarium shark, caught on the SECOND touch: the first one only
     // turns him round. True once per catch, and true again on a catch after
@@ -509,6 +526,24 @@ namespace Theme {
     // consume-once contract as the three above; main.cpp turns it into the
     // PARKA unlock.
     bool consumeLodgeKnock();
+    // True once, after the owl on the FIRE background was tapped while asking
+    // WHAT REEKS?! (every third time he speaks). main.cpp turns it into
+    // Squachy::unlockShambler().
+    bool consumeOwlReek();
+    // Whether the owl still asks WHAT REEKS?! at all: main.cpp passes false
+    // once the SHAMBLER is unlocked, and that slot becomes an ordinary quip.
+    void setOwlAsks(bool on);
+    // TH3 0N3: now and then one glyph in the DIGITAL rain falls red, and a
+    // tap on it sets this once. setRedGlyph(false) stops sending it, once
+    // the coat is earned.
+    bool consumeRedGlyph();
+    void setRedGlyph(bool on);
+    // XYZZY, on the TERMINAL background: the terminal types the word now and
+    // then, and each tap on it is reported here once -- 1, 2, then 3, which is
+    // the YZZERD unlock, then round again. 0 when nothing new was tapped.
+    uint8_t consumeXyzzy();
+    // Bring the word up now instead of on its own clock (console, emulator).
+    void summonXyzzy();
 
     // The flock's wing, exposed so the CHROME WING outfit can wear the
     // exact same shape rather than an approximation of it: a curved lobe

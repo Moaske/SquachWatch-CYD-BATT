@@ -312,7 +312,8 @@ void tick(uint32_t now) {
             SquachMesh::Peer o = look;
             o.custom = false;
             o.name[0] = '\0';
-            o.nick = (uint8_t)((look.nick + i) % nickCount());
+            o.aura = false;             // one Legend in the room is plenty
+            o.nick =(uint8_t)((look.nick + i) % nickCount());
             // Dressed differently, so the SQUAD screen's carousel shows three
             // Squachys rather than one in three names.
             o.outfit = (uint8_t)((look.outfit + i * 3) % Squachy::outfitCount());
@@ -351,6 +352,11 @@ bool command(const char* line) {
     if (!strcmp(verb, "outfit")) return pickIndex("outfit", arg, Squachy::outfitCount(), look.outfit);
     if (!strcmp(verb, "shade"))  return pickIndex("shade", arg, 4, look.shade);
     if (!strcmp(verb, "nick"))   return pickIndex("nick", arg, nickCount(), look.nick);
+    if (!strcmp(verb, "aura")) {
+        if (onOff(arg, look.aura, "lit", "out")) { advDue = true; return true; }
+        fprintf(stderr, "[meshsim] aura on|off\n");
+        return false;
+    }
     if (!strcmp(verb, "name")) {
         size_t i = 0;
         for (; *arg && i < SquachMesh::NAME_LEN; arg++) {
@@ -384,6 +390,21 @@ bool command(const char* line) {
         t[i] = '\0';
         while (i && t[i - 1] == ' ') t[--i] = '\0';
         return sayText(t, now);
+    }
+    if (!strcmp(verb, "headsup")) {
+        // headsup TYPE [RSSI]: the visitor caught one, and says so.
+        if (!present) { fprintf(stderr, "[meshsim] nobody is here to say so\n"); return false; }
+        char* end = nullptr;
+        const long ty = strtol(arg, &end, 10);
+        if (end == arg) { fprintf(stderr, "[meshsim] headsup TYPE [RSSI]\n"); return false; }
+        const long rs = (end && *end) ? strtol(end, nullptr, 10) : -60;
+        const uint8_t tail[3] = { 0xAB, 0xCD, (uint8_t)ty };
+        const uint32_t c = ++ctr;
+        frameLen[0] = MeshMsg::sealHeadsUp(MeshCrypto::impl(), PEER_MAC, c, (uint8_t)ty, (int8_t)rs, tail,
+                                           frames[0], sizeof frames[0]);
+        snprintf(said, sizeof said, "(heads-up, type %ld)", ty);
+        broadcast(frameLen[0] ? 1 : 0, now);
+        return true;
     }
     if (!strcmp(verb, "emote")) {
         if (!present) { fprintf(stderr, "[meshsim] nobody is here to do it\n"); return false; }
@@ -422,8 +443,8 @@ bool command(const char* line) {
     }
     if (!strcmp(verb, "status")) { fprintf(stderr, "[meshsim] %s\n", status()); return true; }
     if (!strcmp(verb, "help") || !verb[0]) {
-        fprintf(stderr, "[meshsim] on|off, outfit N, shade N, nick N, name TEXT, phrase same|other, "
-                        "reply on|off, say N, text MESSAGE, emote N [SETUP], squad N, setup, status\n");
+        fprintf(stderr, "[meshsim] on|off, outfit N, shade N, nick N, aura on|off, name TEXT, phrase same|other, "
+                        "reply on|off, say N, text MESSAGE, emote N [SETUP], headsup TYPE [RSSI], squad N, setup, status\n");
         return true;
     }
     fprintf(stderr, "[meshsim] unknown: %s (try help)\n", verb);

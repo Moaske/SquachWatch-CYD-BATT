@@ -113,9 +113,13 @@ jobs:
 
           Updates (keeps settings):
             freenove28-UPDATE-app-0x10000.bin       at address 0x10000
+            parts/otadata-0xE000.bin                at address 0xE000
+          The otadata file makes the board boot the app just written. It is
+          needed when the board ever took a WiFi or Bluetooth update (it may
+          be running the second app slot), and harmless otherwise.
 
           Browser flasher: https://espressif.github.io/esptool-js/
-          Connect at 115200, add the file with the address above, Program.
+          Connect at 115200, add the file(s) with the address(es) above, Program.
           Switch the battery OFF while the board is on its own USB port.
           EOF
           echo "OUT=$OUT" >> "$GITHUB_ENV"

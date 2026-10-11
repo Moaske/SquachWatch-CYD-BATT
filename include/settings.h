@@ -130,9 +130,14 @@ namespace Settings {
     bool       rotationLocked();
     void       toggleRotationLock();
 
-    // The Legend top hat: worn unless taken off on the APPEARANCE page.
-    bool       topHatShown();
-    void       toggleTopHat();
+    // The Legend's aura: lit unless put out on the APPEARANCE page.
+    bool       auraShown();
+    void       toggleAura();
+    // DETECTIONS on the APPEARANCE page: XP (the counter buttons across the
+    // top, Squachy on the button bar) or CLASSIC (the NEARBY headline and
+    // the full counter rows at the bottom, as before v1.31.0).
+    bool       detXp();
+    void       toggleDetXp();
 
     // Last rotation (0..3, TFT_eSPI's setRotation() values) the rotate
     // button left the screen on -- so it comes back up the same way
@@ -167,6 +172,12 @@ namespace Settings {
     // real are the backlight, the idle frame rate, and the core clock.
     bool       powerSaver();
     void       togglePowerSaver();
+#if SQW_WIFI_5G
+    // 5 GHz scanning, on a board whose chip has it: BAND BOTH (on, the
+    // default) or BAND 2 on the console. See hop5() in detection.cpp.
+    bool       wifi5();
+    void       setWifi5(bool on);
+#endif
 
     // Seconds of no touch before the backlight drops to dimLevel(). 0 = never.
     uint16_t   screenTimeoutSec();
@@ -226,6 +237,15 @@ namespace Settings {
     // ended is how long it lasted (to within ten minutes).
     void       noteRunMinutes(uint16_t boot, uint16_t minutes);
     uint8_t    runHistory(uint16_t* boots, uint16_t* minutes, uint8_t cap);
+    // PRIVACY MODE (SYSTEM): the screen hides the device half of every
+    // address and all but three characters of every device and network
+    // name. See include/privacy.h. Off by default.
+    bool       privacyMode();
+    // EXT SCREEN (the Cardputer ADV): a second panel on the EXT header shows
+    // the main scene, and the built-in screen is left for the menus.
+    bool       extScreen();
+    void       toggleExtScreen();
+    void       togglePrivacyMode();
     bool       quietTrackers();
     void       toggleQuietTrackers();
     // Set the first time this watch's GPS answers: it is an S3 Plus, whose
@@ -499,6 +519,11 @@ namespace Settings {
     // sits behind the same consent gate.
     bool        messagesOn();
     void        toggleMessages();
+    // HEADS-UP: telling the squad about a serious catch, and showing theirs.
+    // On by default, and silent anyway without MESSAGES and a phrase; the
+    // sending half needs TRANSMIT like everything else.
+    bool        meshHeadsUp();
+    void        toggleMeshHeadsUp();
     // Whether the messages tutorial has run. Set when it STARTS, so a
     // skipped tutorial counts as seen; "?" on the message screen replays it.
     bool        meshTutorSeen();

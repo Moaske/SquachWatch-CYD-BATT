@@ -7,6 +7,7 @@
 #include "ota_core.h"
 #include "ota_wifi.h"
 #include "theme.h"
+#include "privacy.h"
 #include "settings.h"
 #include "security.h"
 #include "ignore_list.h"
@@ -76,8 +77,16 @@ static const SettingsRow ALL_ROWS[] = {
     // board with a buzzer, so the emulator (no board macro) never lists it.
     SettingsRow::BUZZER,
 #endif
+#if SQW_WIFI_5G
+    // What the sniffer listens to, beside what it does with what it hears.
+    // Only on a chip that has 5 GHz, so every other board's list is as it was.
+    SettingsRow::WIFI_BANDS,
+#endif
     SettingsRow::DETECTION_FILTER,
     SettingsRow::IGNORED_DEVICES,
+#if defined(CARDPUTER_ADV)
+    SettingsRow::EXT_SCREEN,
+#endif
     // APPEARANCE opens the display page -- see APPEARANCE_ROWS. It sat at the
     // very top of this list, which put it under the first thumb that opened
     // the screen and got pressed by accident. Down here with SQUACHMESH it is
@@ -109,16 +118,17 @@ static const SettingsRow ALL_ROWS[] = {
 static const uint8_t ALL_ROWS_N = sizeof(ALL_ROWS) / sizeof(ALL_ROWS[0]);
 
 // The APPEARANCE page: everything about how HE looks, then everything about
-// how the SCREEN looks. The Legend top hat only gets a row once he has a hat
-// to take off.
+// how the SCREEN looks. The Legend's aura only gets a row once he has an aura
+// to put out.
 static const SettingsRow APPEARANCE_ROWS[] = {
     // How HE looks comes first -- these are the rows people open this page to
-    // change, and they were a scroll away on the main list. TOP HAT only
+    // change, and they were a scroll away on the main list. AURA only
     // appears once it has been earned; see buildDisplayList().
     SettingsRow::SQUACHY_SIZE, SettingsRow::OUTFIT, SettingsRow::PET,
-    SettingsRow::SHADES_COLOR, SettingsRow::BANTER, SettingsRow::TOP_HAT,
+    SettingsRow::SHADES_COLOR, SettingsRow::BANTER, SettingsRow::AURA,
     // Then how the SCREEN looks.
-    SettingsRow::THEME, SettingsRow::BACKGROUND, SettingsRow::BACKGROUND_LOCK, SettingsRow::BRIGHTNESS,
+    SettingsRow::THEME, SettingsRow::BACKGROUND, SettingsRow::BACKGROUND_LOCK, SettingsRow::DET_STYLE,
+    SettingsRow::BRIGHTNESS,
     SettingsRow::INVERT, SettingsRow::RGB_SWAP, SettingsRow::ROTATION_LOCK,
     // And the one light that is not on the screen at all.
     SettingsRow::STATUS_LIGHT,
@@ -141,6 +151,7 @@ static const uint8_t WATCH_ROWS_N = sizeof(WATCH_ROWS) / sizeof(WATCH_ROWS[0]);
 
 // The SYSTEM page: the rarely-needed machinery, off the main list.
 static const SettingsRow SYSTEM_ROWS[] = {
+    SettingsRow::PRIVACY,
 #if defined(FREENOVE_S3) || defined(BOARD_BATT_PIN)
     SettingsRow::BOARD_BATTERY,
 #endif
@@ -183,7 +194,7 @@ static_assert(WATCH_ROWS_N <= LIST_MAX_N, "the display list is sized off LIST_MA
 // look identical, so somebody looking for OUTFIT after turning boring mode on
 // had no way to learn where it went.
 //
-// This is deliberately NOT how unearned things behave: PET and TOP HAT stay
+// This is deliberately NOT how unearned things behave: PET and AURA stay
 // hidden entirely (see buildDisplayList), because a greyed-out row saying
 // "not found yet" hands over the existence of a secret.
 static bool isSquachyOnlyRow(SettingsRow r) {
@@ -197,7 +208,7 @@ static bool isSquachyOnlyRow(SettingsRow r) {
            r == SettingsRow::SQUACHMESH ||
            r == SettingsRow::SHADES_COLOR || r == SettingsRow::SQUACHY_SIZE ||
            r == SettingsRow::OUTFIT ||
-           r == SettingsRow::PET || r == SettingsRow::TOP_HAT;
+           r == SettingsRow::PET || r == SettingsRow::AURA;
 }
 
 enum class RowGroupId : uint8_t { APPEARANCE, BEHAVIOR, SQUACHY, SYSTEM, DESK, SQUAD, WATCH };
@@ -245,7 +256,7 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::ROTATION_LOCK:
         case SettingsRow::STATUS_LIGHT:
         case SettingsRow::SHADES_COLOR:
-        case SettingsRow::TOP_HAT:
+        case SettingsRow::AURA:
         // SIZE, OUTFIT and PET moved onto the APPEARANCE page with the rest of
         // how he looks. They answer APPEARANCE rather than SQUACHY so the page
         // draws under one header instead of splitting in two.
@@ -253,12 +264,16 @@ static RowGroupId groupFor(SettingsRow r) {
         case SettingsRow::OUTFIT:
         case SettingsRow::PET:
         case SettingsRow::BANTER:
+        case SettingsRow::DET_STYLE:
             return RowGroupId::APPEARANCE;
         case SettingsRow::BORING_MODE:
         case SettingsRow::CONFIDENCE:
         case SettingsRow::AUTO_QUIET:
 #if defined(CROWPANEL7)
         case SettingsRow::BUZZER:
+#endif
+#if SQW_WIFI_5G
+        case SettingsRow::WIFI_BANDS:
 #endif
         case SettingsRow::DETECTION_FILTER:
         case SettingsRow::IGNORED_DEVICES:
@@ -337,12 +352,12 @@ static uint8_t buildDisplayList(DisplayItem* out) {
         const SettingsRow r = src[i];
         // Boring mode greys these instead of hiding them -- see
         // isSquachyOnlyRow(). They stay in the list; drawing handles the rest.
-        // PET and TOP HAT are hidden by not being EARNED rather than by a
+        // PET and AURA are hidden by not being EARNED rather than by a
         // mode. Showing a permanently-off row for something you have never
-        // seen would give the secret away -- and a switch for a hat he is
-        // not wearing yet would be a switch that does nothing.
-        if (r == SettingsRow::PET && !Squachy::petUnlocked()) continue;
-        if (r == SettingsRow::TOP_HAT && !Squachy::hasTopHat()) continue;
+        // seen would give the secret away -- and a switch for an aura he
+        // does not have yet would be a switch that does nothing.
+        if (r == SettingsRow::PET && !Squachy::anyPetUnlocked()) continue;
+        if (r == SettingsRow::AURA && !Squachy::hasAura()) continue;
         // Not a secret, just impossible: a board without a second app slot or
         // a Bluetooth server has nothing to update into.
         if ((r == SettingsRow::UPDATE_FIRMWARE || r == SettingsRow::UPDATE_CHECK) && !OtaCore::available()) continue;
@@ -444,7 +459,7 @@ static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom,
     // fit above the BACK strip in landscape. A wide panel draws the row a
     // size bigger, and this carries it: taller letters, taller row, bigger
     // thumb target, all off the one number.
-    rowH = t.fontHeight() + 10;
+    rowH = t.fontHeight() + Theme::listRowPad();
     const int big = t.fontHeight();
     t.setTextSize(Theme::uiTextSize(t, 1));
     headerH = t.fontHeight() + 6;
@@ -624,7 +639,7 @@ static void drawPinnedBack(TFT_eSPI& t, int screenW, int screenH) {
     t.fillRect(x, y, w, h, Theme::BG);
     t.drawFastHLine(x, y, w, Theme::PURPLE);
     t.setTextFont(1);
-    t.setTextSize(Theme::uiMenuTextSize(t));
+    t.setTextSize(Theme::compact() ? 1 : Theme::uiMenuTextSize(t));
     t.setTextColor(Theme::CYAN, Theme::BG);
     // The DESK MODE page splits the strip: OK on the left goes straight out
     // to wherever Settings was opened from, the desk or the main screen; UP
@@ -854,6 +869,13 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "BUZZER"; value = Settings::buzzerOn() ? "NEW ONLY" : "OFF";
             break;
 #endif
+#if SQW_WIFI_5G
+        case SettingsRow::WIFI_BANDS:
+            // Short values: the label and its value share 240px in portrait
+            // at size 2, the squeeze TYPE FILTER below is named for.
+            label = "WIFI BANDS"; value = Settings::wifi5() ? "2.4+5" : "2.4";
+            break;
+#endif
         case SettingsRow::DETECTION_FILTER:
             // "DETECTION FILTER" (the row's own screen title, no width
             // constraint there) overlaps its own "14/14" value in
@@ -930,6 +952,12 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         }
 #endif
 #endif
+        case SettingsRow::EXT_SCREEN:
+            label = "EXT SCREEN"; value = Settings::extScreen() ? "ON" : "OFF";
+            break;
+        case SettingsRow::PRIVACY:
+            label = "PRIVACY MODE"; value = Settings::privacyMode() ? "ON" : "OFF";
+            break;
         case SettingsRow::CHARGE_MODE:
             label = "CHARGE MODE"; value = "START";
             break;
@@ -1026,6 +1054,10 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
             label = "BANTER";
             value = Settings::banterName();
             break;
+        case SettingsRow::DET_STYLE:
+            label = "DETECTIONS";
+            value = Settings::detXp() ? "XP" : "CLASSIC";
+            break;
         case SettingsRow::VIEW_DIARY:
             label = "SQUACHY'S DIARY";
             break;
@@ -1056,8 +1088,8 @@ static void rowContent(SettingsRow r, const DetectionEngine& eng, char* valBuf, 
         case SettingsRow::APPEARANCE:
             label = "APPEARANCE"; value = ">";
             break;
-        case SettingsRow::TOP_HAT:
-            label = "TOP HAT"; value = Settings::topHatShown() ? "SHOWN" : "HIDDEN";
+        case SettingsRow::AURA:
+            label = "AURA"; value = Settings::auraShown() ? "LIT" : "OUT";
             break;
         case SettingsRow::BACK:
             label = "< BACK";
@@ -1077,8 +1109,9 @@ void uiSettingsTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng) {
     s_hasWatch = eng.watchKind() != DetectionEngine::WatchKind::NONE;
     s_hasHunt  = eng.huntKind()  != DetectionEngine::WatchKind::NONE;
     s_dexCaught = uiDexCaught(eng);
-    if (s_hasWatch) { strncpy(s_watchLabel, eng.watchLabel(), sizeof(s_watchLabel) - 1); s_watchLabel[sizeof(s_watchLabel) - 1] = 0; }
-    if (s_hasHunt)  { strncpy(s_huntLabel,  eng.huntLabel(),  sizeof(s_huntLabel)  - 1); s_huntLabel[sizeof(s_huntLabel)  - 1] = 0; }
+    char pv[40];
+    if (s_hasWatch) { strncpy(s_watchLabel, Privacy::name(eng.watchLabel(), pv, sizeof pv), sizeof(s_watchLabel) - 1); s_watchLabel[sizeof(s_watchLabel) - 1] = 0; }
+    if (s_hasHunt)  { strncpy(s_huntLabel,  Privacy::name(eng.huntLabel(),  pv, sizeof pv), sizeof(s_huntLabel)  - 1); s_huntLabel[sizeof(s_huntLabel)  - 1] = 0; }
 
     int top, bodyBottom, rowH, headerH, tallH;
     computeGeom(t, h, top, bodyBottom, rowH, headerH, tallH);
@@ -1100,7 +1133,7 @@ void uiSettingsTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng) {
     // Only the BACKGROUND moves. Everything else on this screen still
     // begins where it did, so no content shifts.
     const int bgTop = 0;
-switch (Settings::background()) {
+if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         case Settings::Background::STARFIELD: Theme::drawStarfield(t, now, bgTop, bodyBottom); break;
         case Settings::Background::TOASTERS:   Theme::drawFlyingToasters(t, now, bgTop, bodyBottom); break;
         case Settings::Background::AQUARIUM:   Theme::drawAquarium(t, now, bgTop, bodyBottom); break;

@@ -23,6 +23,7 @@
 #include "theme.h"
 #include "settings.h"
 #include "squachy.h"
+#include "pet.h"
 #include "detection.h"
 #include "detection_info.h"
 #include "ui_clear.h"
@@ -53,6 +54,7 @@
 #include "ui_colorcheck.h"
 #include "ui_diagnostics.h"
 #include "ui_desk.h"
+#include "ui_outfit.h"
 #include "ui_zone.h"
 #include "clock.h"
 #include "ui_boot.h"
@@ -301,10 +303,12 @@ static void usage() {
         "  --frames N        animation warm-up frames before capture (default 90)\n"
         "  --onboard         let Squachy's first-boot walkthrough run\n"
         "  --sequence N      capture N consecutive frames instead of one\n"
-        "  --tap F:X:Y       tap the BACKGROUND at x,y on warm-up frame F (repeatable)\n"
+        "  --tap F:X:Y       tap x,y on frame F: Squachy if he is there, else the background\n"
         "  --raw PATH        write raw RGB888 frames to PATH instead of PNGs --\n"
         "                    what the GUI consumes, no encode/decode on either side\n");
 }
+
+namespace Squachy { extern uint32_t t3DejaEvery; }
 
 int main(int argc, char** argv) {
     if (argc < 2) { usage(); return 2; }
@@ -412,7 +416,7 @@ int main(int argc, char** argv) {
     int H = portrait ? 320 : 240;
     if (!sizeArg.empty()) {
         int sw = 0, sh = 0;
-        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; }
+        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
         else { fprintf(stderr, "--size wants WxH, e.g. 480x320" "\n"); return 2; }
     }
 
@@ -465,11 +469,17 @@ int main(int argc, char** argv) {
     if (outfitIdx >= 0) {
         Squachy::unlockAllOutfits();
         for (int k = 0; k < outfitIdx; k++) Squachy::cycleOutfit();
+        // The master unlock lights the aura too. A render of an outfit is a
+        // render of the outfit -- the gallery, the demo clips -- so put it
+        // out unless SQUACHSIM_LEGEND asked for it.
+        if (!getenv("SQUACHSIM_LEGEND") && Settings::auraShown()) Settings::toggleAura();
     }
     // --pet N picks the companion: 0 off, 1 VAPOR SHAGGY, 2 the yeti. The
     // unlock comes with it, the same way --outfit unlocks what it selects.
     if (petIdx >= 0) {
         Squachy::unlockPet();
+        if (petIdx == (int)Squachy::PetId::CLIPPY) Squachy::unlockClippy(nullptr);
+        if (petIdx == (int)Squachy::PetId::TOASTER) Squachy::unlockToaster(nullptr);
         for (int k = 0; k < 8 && (int)Squachy::petChoice() != petIdx; k++) Squachy::cyclePet();
     }
 
@@ -477,6 +487,8 @@ int main(int argc, char** argv) {
     if (peerOutfit >= 0) {
         guest.nick = 4; guest.outfit = (uint8_t)peerOutfit; guest.shade = 1;
         guest.custom = !peerName.empty();
+        // SQUACHSIM_PEERAURA=1: the visitor is a Legend with his aura lit.
+        guest.aura = getenv("SQUACHSIM_PEERAURA") != nullptr;
         snprintf(guest.name, sizeof(guest.name), "%s", peerName.c_str());
         uiClearSetGuest(&guest);
     }
@@ -527,6 +539,7 @@ int main(int argc, char** argv) {
             SquachMesh::Peer p{};
             p.nick = (uint8_t)(3 + k * 2); p.outfit = (uint8_t)((k * 5 + 1) % Squachy::outfitCount()); p.shade = (uint8_t)(k % 4);
             if (NAMES[k]) { p.custom = true; snprintf(p.name, sizeof p.name, "%s", NAMES[k]); }
+            p.aura = k == 0 && getenv("SQUACHSIM_PEERAURA") != nullptr;   // the first of them, the Legend
             uint8_t ad[SquachMesh::LEN_MAX + 2] = { (uint8_t)(SquachMesh::COMPANY_ID & 0xFF), (uint8_t)(SquachMesh::COMPANY_ID >> 8) };
             const size_t an = SquachMesh::encode(p, ad + 2);
             Mesh::onManufacturerData(ad, an + 2, mac, millis());
@@ -543,6 +556,31 @@ int main(int argc, char** argv) {
     // The desk's HOW MANY follows --crowd, the way the main screen's does.
     for (int g = 0; g < 10 && Settings::deskCrowd() != Settings::meshCrowd(); g++) Settings::cycleDeskCrowd();
     if (getenv("SQUACHSIM_FULLVISIT") && !Settings::deskFullVisit()) Settings::toggleDeskFullVisit();
+    // SQUACHSIM_LEGEND=1: the Legend look, aura and all, without the catches.
+    if (getenv("SQUACHSIM_LEGEND")) Squachy::previewLegend(true);
+    // SQUACHSIM_DEJA=ms brings TH3 0N3's deja vu cat round that often.
+    if (const char* dj = getenv("SQUACHSIM_DEJA")) Squachy::t3DejaEvery = (uint32_t)atoi(dj);
+    // SQUACHSIM_PRIVACY=1: PRIVACY MODE on, for shots of the masked screens.
+    if (getenv("SQUACHSIM_PRIVACY") && !Settings::privacyMode()) Settings::togglePrivacyMode();
+    // SQUACHSIM_CLASSIC=1: DETECTIONS set to CLASSIC (NEARBY and the full counter rows).
+    if (getenv("SQUACHSIM_CLASSIC") && Settings::detXp()) Settings::toggleDetXp();
+    // SQUACHSIM_HEADSUP=TYPE|NAME: a squad heads-up arriving, the way
+    // main.cpp shows one (banner plus Squachy's line), e.g. 1|NESSIE for a
+    // Flock. The banner is drawn on CLEAR only while this is set.
+    static char huSub[40], huLine[40];
+    const bool headsUp = getenv("SQUACHSIM_HEADSUP") != nullptr;
+    if (headsUp) {
+        int ty = 0; char who[16] = "NESSIE";
+        sscanf(getenv("SQUACHSIM_HEADSUP"), "%d|%15s", &ty, who);
+        const char* what = detectionTypeName((DetectionType)ty);
+        snprintf(huSub, sizeof huSub, "%s near %s", what, who);
+        snprintf(huLine, sizeof huLine, "%s says: %s!", who, what);
+        Theme::showToast("HEADS-UP", huSub, Theme::AMBER, 8000);
+        Squachy::announce(huLine);
+    }
+    // SQUACHSIM_CLIPCATCH=TYPE: C1iPPY has just seen a catch of that type and
+    // has his expert opinion ready.
+    if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));
     // SQUACHSIM_LTBRIGHT=N: the STATUS LIGHT's BRIGHTNESS step, 1..7.
     if (const char* lb = getenv("SQUACHSIM_LTBRIGHT"))
         for (int g = 0; g < 8 && Settings::lightBrightness() != atoi(lb); g++) Settings::cycleLightBrightness();
@@ -562,6 +600,19 @@ int main(int argc, char** argv) {
     DetectionEngine engine;
     engine.init();
     if (!noSeed) seedDetections(engine);
+    // SQUACHSIM_IGNOREALL=1: every seeded device goes on the IGNORE list, for
+    // checking that the NEARBY headline leaves ignored devices out while the
+    // counters still count them.
+    // SQUACHSIM_SNOOZEALL=1 snoozes them instead, for the same check.
+    if (getenv("SQUACHSIM_IGNOREALL") || getenv("SQUACHSIM_SNOOZEALL")) {
+        IgnoreList::begin();
+        const bool snooze = getenv("SQUACHSIM_SNOOZEALL") != nullptr;
+        for (uint8_t i = 0; i < engine.logCount(); i++)
+            if (const Detection* d = engine.logAt(i)) {
+                if (snooze) IgnoreList::snooze(d->mac);
+                else        IgnoreList::add(d->mac, d->type);
+            }
+    }
 
     if (onboard) Squachy::trigger(Squachy::Event::BOOTED);
     // Runs every pose he has back to back, which is the only way to see
@@ -597,7 +648,8 @@ int main(int argc, char** argv) {
 
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
-        if      (screen == "clear")    { uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false); }
+        if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
+                                         if (headsUp) Theme::drawToast(frame, t); }
         else if (screen == "log") {
             const bool info = (infoType >= 0);
             const DetectionType it = info ? (DetectionType)infoType : DetectionType::UNKNOWN;
@@ -621,8 +673,9 @@ int main(int argc, char** argv) {
         else if (screen == "phone")    uiPhoneTick(frame, t, engine);
         else if (screen == "bingo")    uiBingoTick(frame, t, engine);
         else if (screen == "dex")      uiDexTick(frame, t, engine);
+        else if (screen == "outfit")   uiOutfitTick(frame, t, engine);
         else if (screen == "meshmenu") uiMeshMenuTick(frame, t, engine);
-        else if (screen == "roster")   uiSquadTick(frame, t, engine);
+        else if (screen == "roster" || screen == "squad") uiSquadTick(frame, t, engine);
         else if (screen == "meshwarn") uiMeshWarnTick(frame, t, engine);
         else if (screen == "phrase")   uiMeshPhraseTick(frame, t, engine);
         else if (screen == "compose")  uiMeshComposeTick(frame, t, engine);
@@ -719,6 +772,33 @@ int main(int argc, char** argv) {
             frame.fillRect(0, 0, W, H, 0x024A);   // dark teal: no costume uses it
             Squachy::drawWaving(frame, W / 2, H - 12, tt, 2.0f, nullptr, false, 0,
                                 /*waving*/ pi == 1, 34, false, false, false, kPoses[pi]);
+        }
+        else if (screen == "solo") {
+            // Him alone on the key colour at the main screen's scale, on the
+            // real clock, in one pose picked by --pose: for looking at a
+            // costume, and with SQUACHSIM_BENCH=1 for weighing one -- he is
+            // drawn 4000 times on a moving clock and the pixels written per
+            // frame are printed. That count is what a costume costs a board;
+            // host time is not (see the costume notes in squachy.cpp).
+            using VP = Squachy::VisitPose;
+            static const VP kP[] = { VP::NONE, VP::NONE, VP::HANDS_UP, VP::CHEER, VP::DANCE,
+                                     VP::BOW, VP::STARTLED, VP::CROUCH, VP::COVER, VP::HIGH_FIVE };
+            const int pi = poseIdx < 0 ? 0 : poseIdx % 10;
+            frame.fillRect(0, 0, W, H, 0x024A);
+            if (getenv("SQUACHSIM_BENCH")) {
+                static bool done = false;
+                if (!done) {
+                    done = true;
+                    const int N = 4000;
+                    g_simPix = 0;
+                    for (int i = 0; i < N; i++)
+                        Squachy::drawWaving(frame, W / 2, H - 14, t + 7000u + (uint32_t)i * 33u, 2.2f, nullptr, false, 0,
+                                            pi == 1, 34, false, false, false, kP[pi]);
+                    printf("BENCH pix %.0f\n", (double)g_simPix / N);
+                }
+            }
+            Squachy::drawWaving(frame, W / 2, H - 14, t, 2.2f, nullptr, false, 0,
+                                /*waving*/ pi == 1, 34, false, false, false, kP[pi]);
         }
         else return false;
         return true;
@@ -866,10 +946,12 @@ int main(int argc, char** argv) {
         }
     }
     else if (screen == "meshmenu")   uiMeshMenuInit(frame);
-    else if (screen == "roster") {
+    else if (screen == "roster" || screen == "squad") {
         // Three members, through the real paths: an advert each so Mesh knows
         // their look, then a sealed HELLO each so MeshTalk puts them on the
         // roster. --pose 1 marks the first of them as still in range.
+        // `squad` is the same seeding on the in-range page (SQUAD from the
+        // main screen), which wants --pose 1 to have anybody in range.
         if (!Settings::meshDetect()) Settings::cycleMeshDetect();
         if (!Settings::messagesOn()) Settings::toggleMessages();
         MeshTalk::setPhrase("GIBSON MOTHMAN PHREAK NESSIE ZEROCOOL");
@@ -911,7 +993,7 @@ int main(int argc, char** argv) {
             const size_t an = SquachMesh::encode(p, ad + 2);
             Mesh::onManufacturerData(ad, an + 2, SEEDS[0].mac, millis());
         }
-        uiSquadInit(frame, true);
+        uiSquadInit(frame, screen == "roster");
     }
     else if (screen == "phrase")     {
         uiMeshPhraseInit(frame);
@@ -1008,14 +1090,49 @@ int main(int argc, char** argv) {
         else                             uiSettingsScroll(1);
     }
 
+    // SQUACHSIM_XYZZY=1 keeps the magic word up on the TERMINAL background and
+    // passes each tap on to Squachy, the way main.cpp does on a board -- so
+    // three --tap flags can play the whole YZZERD unlock.
+    const bool xyzzy = getenv("SQUACHSIM_XYZZY") != nullptr;
+    // A tap that lands on Squachy is his, as main.cpp has it: noted where it
+    // landed, then a pet (or, on his shades with the aura lit, a reading).
+    // Anything else is the background's.
+    auto tapAt = [&](int x, int y, uint32_t when) {
+        if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }
+        else {
+            Theme::backgroundTap(x, y, when);
+            if (Theme::consumeOwlReek()) Squachy::unlockShambler();
+            if (Theme::consumeRedGlyph()) Squachy::unlockTh3();
+        }
+        Theme::setOwlAsks(!Squachy::shamblerUnlocked());
+        Theme::setRedGlyph(!Squachy::th3Unlocked());
+    };
+    Theme::setOwlAsks(!Squachy::shamblerUnlocked());
+    Theme::setRedGlyph(!Squachy::th3Unlocked());
+    auto xyzzyStep = [&]() {
+        if (!xyzzy) return;
+        Theme::summonXyzzy();
+        if (const uint8_t said = Theme::consumeXyzzy()) Squachy::magicWord(said);
+    };
+    // SQUACHSIM_GRAB=x:y -- a finger holding him up there, from frame 20.
+    int grabX = -1, grabY = -1;
+    if (const char* g = getenv("SQUACHSIM_GRAB")) sscanf(g, "%d:%d", &grabX, &grabY);
+    bool grabbed = false;
+    auto grabStep = [&]() {
+        if (grabX < 0) return;
+        if (!grabbed) { grabbed = true; Squachy::trigger(Squachy::Event::HELD); }
+        Squachy::grabTo(grabX, grabY);
+    };
     for (int i = 0; i < frames; i++) {
         const uint32_t tNow = now + (uint32_t)i * STEP_MS;
+        if (i > 20) grabStep();
         if (!tick(tNow)) { usage(); return 2; }
         // After the frame, so the tap lands on something just drawn:
         // backgroundTap() hit-tests published positions and ignores anything
         // that has not been refreshed in the last few frames.
         for (int k = 0; k < tapN; k++)
-            if (taps[k].f == i) Theme::backgroundTap(taps[k].x, taps[k].y, tNow);
+            if (taps[k].f == i) tapAt(taps[k].x, taps[k].y, tNow);
+        xyzzyStep();
     }
 
     // Capture runs on from where the warm-up left off, so a sequence is
@@ -1028,13 +1145,48 @@ int main(int argc, char** argv) {
         if (!rawOut) { fprintf(stderr, "failed to open %s\n", rawPath.c_str()); return 1; }
     }
 
+    // SQUACHSIM_THROW=who:x0:y0:x1:y1 -- a throw at the start of the
+    // capture. who is s (Squachy: held past the hold time, then flung) or c
+    // (C1iPPY: grabbed, then flung; x0 -1 starts on him, x1,y1 relative). The finger goes from x0,y0 to x1,y1 over
+    // four frames and lets go on the fifth.
+    char thWho = 0;
+    int thX0 = 0, thY0 = 0, thX1 = 0, thY1 = 0;
+    if (const char* g = getenv("SQUACHSIM_THROW"))
+        if (sscanf(g, "%c:%d:%d:%d:%d", &thWho, &thX0, &thY0, &thX1, &thY1) != 5) thWho = 0;
+    auto throwStep = [&](int s, uint32_t t) {
+        if (!thWho) return;
+        const int hold = thWho == 's' ? 20 : 0;     // Squachy wants a hold first
+        if (s > hold + 5) return;
+        SimClock::nowMs = t;
+        if (s <= hold) {
+            if (thWho == 's') { if (s == 0) Squachy::trigger(Squachy::Event::HELD); Squachy::grabTo(thX0, thY0); }
+            else if (s == 0) {
+                // A negative x0 means "wherever he is", and x1,y1 is then how
+                // far the finger goes from there.
+                int px, py;
+                if (thX0 < 0 && Pet::clippyCenter(px, py)) { thX1 += px; thY1 += py; thX0 = px; thY0 = py; }
+                Pet::clippyGrab(thX0, thY0, t);
+            }
+            return;
+        }
+        const int k = s - hold;
+        if (k <= 4) {
+            const int x = thX0 + (thX1 - thX0) * k / 4, y = thY0 + (thY1 - thY0) * k / 4;
+            if (thWho == 's') Squachy::grabTo(x, y); else Pet::clippyDrag(x, y, t);
+        } else {
+            if (thWho == 's') Squachy::release(); else Pet::clippyRelease(t);
+        }
+    };
     for (int s = 0; s < sequence; s++) {
         const uint32_t sNow = now + (uint32_t)(frames + s) * STEP_MS;
+        grabStep();
+        throwStep(s, sNow);
         tick(sNow);
         // --tap frame numbers run straight on through the capture, so a tap
         // can land on a frame you can actually look at afterwards.
         for (int k = 0; k < tapN; k++)
-            if (taps[k].f == frames + s) Theme::backgroundTap(taps[k].x, taps[k].y, sNow);
+            if (taps[k].f == frames + s) tapAt(taps[k].x, taps[k].y, sNow);
+        xyzzyStep();
         frame.pushSprite(0, 0);
         std::vector<uint8_t> rgb = toRgb888(tft.pixelsRGB565());
 

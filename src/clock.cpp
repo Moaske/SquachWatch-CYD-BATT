@@ -57,6 +57,19 @@ extern volatile bool g_benchUpdateStop;
 // from the console, for bringing up a panel nobody can read yet.
 extern volatile bool g_consoleInvert;
 extern volatile bool g_consoleAdc;
+extern volatile bool g_consoleXyzzy;
+extern volatile bool g_consoleLegend;
+extern volatile uint8_t g_consoleHeadsUp;
+extern volatile bool g_consoleClippy;
+extern volatile bool g_consoleToaster;
+#if defined(CARDPUTER_ADV)
+extern volatile int8_t g_consoleExt;
+#endif
+extern volatile bool g_consoleOutfitSet;
+extern volatile bool g_consoleAura;
+extern volatile int8_t g_consoleOutfit;
+extern volatile bool g_consolePins;
+extern volatile bool g_consoleI2c;
 extern volatile bool g_consoleWatchTest;
 extern volatile bool g_consoleRotate;
 extern volatile bool g_consoleBatt;
@@ -542,6 +555,20 @@ void pollSerial() {
         }
         if (strcasecmp(line, "INVERT") == 0) { g_consoleInvert = true; continue; }
         if (strcasecmp(line, "ADC") == 0)    { g_consoleAdc = true; continue; }
+        if (strcasecmp(line, "XYZZY") == 0)  { g_consoleXyzzy = true; continue; }
+        if (strcasecmp(line, "LEGEND") == 0) { g_consoleLegend = true; continue; }
+#if defined(CARDPUTER_ADV)
+        if (strcasecmp(line, "EXT ON") == 0)  { g_consoleExt = 1; continue; }
+        if (strcasecmp(line, "EXT OFF") == 0) { g_consoleExt = 0; continue; }
+        if (strcasecmp(line, "EXT ROT") == 0) { g_consoleExt = 2; continue; }
+#endif
+        if (strcasecmp(line, "CLIPPY") == 0) { g_consoleClippy = true; continue; }
+        if (strcasecmp(line, "TOASTER") == 0) { g_consoleToaster = true; continue; }
+        if (strncasecmp(line, "HEADSUP ", 8) == 0) { g_consoleHeadsUp = (uint8_t)atoi(line + 8); continue; }
+        if (strcasecmp(line, "AURA") == 0)   { g_consoleAura = true; continue; }
+        if (strncasecmp(line, "OUTFIT ", 7) == 0) { g_consoleOutfit = (int8_t)atoi(line + 7); g_consoleOutfitSet = true; continue; }
+        if (strcasecmp(line, "PINS") == 0)   { g_consolePins = true; continue; }
+        if (strcasecmp(line, "I2C") == 0)    { g_consoleI2c = true; continue; }
         if (strcasecmp(line, "WATCHTEST") == 0) { g_consoleWatchTest = true; continue; }
         if (strcasecmp(line, "ROT") == 0)    { g_consoleRotate = true; continue; }
         if (strcasecmp(line, "BATT") == 0)    { g_consoleBatt = true; continue; }
@@ -590,6 +617,19 @@ void pollSerial() {
             ESP.restart();
         }
         if (strncasecmp(line, "RADIO", 5) == 0) { radioReport(strcasestr(line, "SCAN") != nullptr); continue; }
+#if SQW_WIFI_5G
+        // BAND: which WiFi bands the sniffer sweeps. BAND 2 is 2.4 GHz only,
+        // as on every other board; BAND BOTH adds the 5 GHz slice. Saved.
+        if (strncasecmp(line, "BAND", 4) == 0) {
+            const char* arg = line + 4;
+            while (*arg == ' ') arg++;
+            if (strcasecmp(arg, "2") == 0 || strcasecmp(arg, "2.4") == 0) { Settings::setWifi5(false); setWifi5Enabled(false); }
+            else if (strcasecmp(arg, "BOTH") == 0 || strcasecmp(arg, "5") == 0) { Settings::setWifi5(true); setWifi5Enabled(true); }
+            else if (*arg) { Serial.println("[radio] BAND 2 (2.4 GHz only) or BAND BOTH"); continue; }
+            Serial.printf("[radio] band: %s\n", Settings::wifi5() ? "2.4 + 5 GHz" : "2.4 GHz only");
+            continue;
+        }
+#endif
 #endif
         if (strncasecmp(line, "ZONE ", 5) == 0) {
             // ZONE US EASTERN, or ZONE 4: the flasher sends the name it
