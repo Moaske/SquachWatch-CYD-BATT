@@ -112,6 +112,29 @@ bool remove(const uint8_t* mac) {
     return true;
 }
 
+bool rekey(const uint8_t* from, const uint8_t* to) {
+    begin();
+    if (!from || !to) return false;
+    const int idx = indexOf(from);
+    if (idx < 0 || indexOf(to) >= 0) return false;
+    memcpy(&s_rec[(size_t)idx * REC], to, 6);
+    return true;
+}
+
+bool addRotating(const uint8_t* mac, DetectionType type, bool (*live)(const uint8_t* mac)) {
+    begin();
+    if (!mac || indexOf(mac) >= 0) return false;
+    for (uint8_t i = 0; live && i < s_count; i++) {
+        uint8_t* r = &s_rec[(size_t)i * REC];
+        if (r[6] == (uint8_t)type && !live(r)) {
+            memcpy(r, mac, 6);   // the same tag, back under a new address
+            save();
+            return true;
+        }
+    }
+    return add(mac, type);
+}
+
 uint8_t count() { begin(); return s_count; }
 
 const uint8_t* macAt(uint8_t idx) {

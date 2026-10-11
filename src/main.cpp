@@ -4933,6 +4933,15 @@ static void boardBatteryTick(uint32_t now) {
 }
 #endif
 
+// IGNORE from the alert or the LOG. A tracker that rotates its address gets
+// its entry reused when the same tag comes back under a new address (after a
+// restart, say), rather than a new entry each time; see addRotating().
+static bool macLiveCb(const uint8_t* mac) { return engine.macLive(mac); }
+static void ignoreDevice(const uint8_t* mac, DetectionType t) {
+    if (DetectionEngine::rotatesAddress(t)) IgnoreList::addRotating(mac, t, macLiveCb);
+    else                                    IgnoreList::add(mac, t);
+}
+
 void loop() {
     // Cheap and unconditional: available() is a register read, and this
     // is the only way in for the one serial command the firmware takes.
@@ -6273,7 +6282,7 @@ void loop() {
                     // is still the user acknowledging the alert.
                     lastTouch = now;
                     if (IgnoreList::contains(s_alertMac)) IgnoreList::remove(s_alertMac);
-                    else                                  IgnoreList::add(s_alertMac, lastAlertType);
+                    else                                  ignoreDevice(s_alertMac, lastAlertType);
                     squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                     enterClear();
                 } else if (uiAlertHitSnooze(tp.x, tp.y, tft.width(), tft.height())) {
@@ -6464,7 +6473,7 @@ void loop() {
                         // feedback at all.
                         const bool wasOn = IgnoreList::contains(s_confirmMac);
                         if (wasOn) IgnoreList::remove(s_confirmMac);
-                        else       IgnoreList::add(s_confirmMac, s_confirmType);
+                        else       ignoreDevice(s_confirmMac, s_confirmType);
                         Theme::showToast(wasOn ? "UN-IGNORED" : "IGNORED",
                                          detectionTypeName(s_confirmType),
                                          Theme::colorFor(s_confirmType));

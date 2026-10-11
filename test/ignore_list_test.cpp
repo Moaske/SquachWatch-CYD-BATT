@@ -81,6 +81,38 @@ int main() {
         ck("UN-IGNORE the new way round takes it off", IgnoreList::remove(fwd) && !IgnoreList::contains(old));
     }
 
+    suite("A rotating tracker's entry follows it (fork addition)");
+    {
+        IgnoreList::clear();
+        const uint8_t t1[6] = { 0xD1, 0x11, 0x22, 0x33, 0x44, 0x55 };
+        const uint8_t t2[6] = { 0xD2, 0x66, 0x77, 0x88, 0x99, 0xAA };
+        const uint8_t t3[6] = { 0xD3, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+        ck("ignore a Google tag", IgnoreList::add(t1, DetectionType::GOOGLE_TAG));
+        ck("rekey to its new address", IgnoreList::rekey(t1, t2));
+        ck("the new address is ignored", IgnoreList::contains(t2));
+        ck("the old one no longer is", !IgnoreList::contains(t1));
+        ck("still one entry", IgnoreList::count() == 1);
+        ck("rekey from an address not on the list does nothing", !IgnoreList::rekey(t3, t1));
+    }
+    // After a restart the tag is back under yet another address, and the
+    // stored one is no longer heard: IGNORE reuses that entry.
+    {
+        const uint8_t t2[6] = { 0xD2, 0x66, 0x77, 0x88, 0x99, 0xAA };
+        const uint8_t t3[6] = { 0xD3, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
+        const uint8_t t4[6] = { 0xD4, 0x01, 0x02, 0x03, 0x04, 0x05 };
+        auto noneLive = [](const uint8_t*) { return false; };
+        auto allLive  = [](const uint8_t*) { return true; };
+        ck("IGNORE again reuses the stale entry", IgnoreList::addRotating(t3, DetectionType::GOOGLE_TAG, noneLive));
+        ck("...so the list does not grow", IgnoreList::count() == 1);
+        ck("...and holds the new address", IgnoreList::contains(t3) && !IgnoreList::contains(t2));
+        ck("a second tag still heard gets its own entry", IgnoreList::addRotating(t4, DetectionType::GOOGLE_TAG, allLive));
+        ck("two entries now", IgnoreList::count() == 2);
+        ck("another type's stale entry is never reused",
+           IgnoreList::add(A, DetectionType::FLOCK) &&
+           IgnoreList::addRotating(B, DetectionType::SAMSUNG_TAG, noneLive) && IgnoreList::contains(A));
+        IgnoreList::clear();
+    }
+
     std::filesystem::remove_all(dir);
     return report();
 }

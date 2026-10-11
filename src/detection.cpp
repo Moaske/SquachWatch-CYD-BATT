@@ -9,6 +9,7 @@
 #include "bingo.h"
 #include "dex.h"
 #include "regulars.h"
+#include "ignore_list.h"
 #include "clock.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -1624,6 +1625,72 @@ void DetectionEngine::mergeRemoteId(const uint8_t* mac, const uint8_t* payload,
     RemoteId::merge(payload, len, _rid, millis());
 }
 
+bool DetectionEngine::rotatesAddress(DetectionType t) {
+    return t == DetectionType::AIRTAG || t == DetectionType::GOOGLE_TAG || t == DetectionType::SAMSUNG_TAG;
+}
+
+// A row that may be the old address of `d`: same type, still in the log as
+// present, gone quiet since `quietSince`, and about as strong.
+bool DetectionEngine::linkCandidate(const Detection& row, uint32_t quietSince, int8_t rssi, uint32_t now) const {
+    (void)now;
+    if (!row.active || row.restored) return false;
+    if ((int32_t)(quietSince - row.lastSeen) < 0) return false;   // heard after quietSince
+    const int diff = (int)row.rssi - (int)rssi;
+    return diff <= LINK_RSSI_DB && diff >= -LINK_RSSI_DB;
+}
+
+void DetectionEngine::handOver(Detection& row, const Detection& d) {
+    uint8_t old[6];
+    memcpy(old, row.mac, 6);
+    memcpy(row.mac, d.mac, 6);
+    row.prevRssi = row.rssi;
+    row.prevAt   = (uint8_t)(millis() >> 11);
+    row.rssi     = d.rssi;
+    row.lastSeen = millis();
+    if (d.name[0]) memcpy(row.name, d.name, sizeof row.name);
+    // What the user decided about the old address applies to the new one.
+    if (IgnoreList::contains(old)) IgnoreList::rekey(old, d.mac);
+    if (IgnoreList::snoozed(old))  IgnoreList::snooze(d.mac);
+    if (memcmp(_watchMac, old, 6) == 0) memcpy(_watchMac, d.mac, 6);
+    if (memcmp(_huntMac,  old, 6) == 0) memcpy(_huntMac,  d.mac, 6);
+    Serial.printf("[rotate] %s %02X:%02X:%02X:%02X:%02X:%02X -> %02X:%02X:%02X:%02X:%02X:%02X, same tag\n",
+                  detectionTypeName(d.type), old[0], old[1], old[2], old[3], old[4], old[5],
+                  d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5]);
+}
+
+bool DetectionEngine::macLive(const uint8_t* mac) const {
+    for (uint8_t i = 0; i < _logCount; i++) {
+        const Detection& row = _log[(_logHead + LOG_CAP - 1 - i) % LOG_CAP];
+        if (row.active && memcmp(row.mac, mac, 6) == 0) return true;
+    }
+    return false;
+}
+
+void DetectionEngine::resolvePending(uint32_t now) {
+    for (uint8_t p = 0; p < PEND_CAP; p++) {
+        PendingLink& pl = _pend[p];
+        if (!pl.used || now - pl.since < LINK_WAIT_MS) continue;
+        pl.used = false;
+        // The quiet row closest in strength, among those silent since the
+        // new address first appeared (minus the moment it takes to rotate).
+        Detection* best = nullptr;
+        int bestDiff = 1000;
+        for (uint8_t i = 0; i < _logCount; i++) {
+            Detection& row = _log[(_logHead + LOG_CAP - 1 - i) % LOG_CAP];
+            if (row.type != pl.d.type || !linkCandidate(row, pl.since, pl.d.rssi, now)) continue;
+            const int diff = abs((int)row.rssi - (int)pl.d.rssi);
+            if (diff < bestDiff) { bestDiff = diff; best = &row; }
+        }
+        if (best) {
+            Detection d = pl.d;
+            d.lastSeen = now;
+            handOver(*best, d);
+        } else {
+            pushLog(pl.d);   // nothing went quiet for it: a new device after all
+        }
+    }
+}
+
 void DetectionEngine::postBle(Detection d) {
     // Disabled types (Settings > DETECTION FILTER) are dropped here,
     // before the dedupe/merge below -- that merge branch re-activates
@@ -1634,6 +1701,7 @@ void DetectionEngine::postBle(Detection d) {
     // the normal expireStale() path like any other device that goes
     // out of range.
     if (!Settings::typeEnabled(d.type)) return;
+    resolvePending(millis());
     // Try to dedupe / merge with existing log entry by MAC
     for (uint8_t i = 0; i < _logCount; i++) {
         uint8_t slot = (_logHead + LOG_CAP - 1 - i) % LOG_CAP;
@@ -1690,6 +1758,34 @@ void DetectionEngine::postBle(Detection d) {
                 queueBlackBox(_log[slot], true);
             }
             return;
+        }
+    }
+    if (rotatesAddress(d.type)) {
+        const uint32_t now = millis();
+        // Already held back: keep it current until it is decided.
+        for (uint8_t p = 0; p < PEND_CAP; p++) {
+            if (_pend[p].used && memcmp(_pend[p].d.mac, d.mac, 6) == 0) {
+                _pend[p].d.rssi = d.rssi;
+                _pend[p].d.lastSeen = now;
+                if (d.name[0]) memcpy(_pend[p].d.name, d.name, sizeof d.name);
+                return;
+            }
+        }
+        // Did a row of its type just go quiet? Then this may be that tag.
+        bool maybe = false;
+        for (uint8_t i = 0; i < _logCount && !maybe; i++) {
+            const Detection& row = _log[(_logHead + LOG_CAP - 1 - i) % LOG_CAP];
+            maybe = row.type == d.type && linkCandidate(row, now - LINK_QUIET_MS, d.rssi, now);
+        }
+        if (maybe) {
+            for (uint8_t p = 0; p < PEND_CAP; p++) {
+                if (_pend[p].used) continue;
+                _pend[p].used  = true;
+                _pend[p].since = now;
+                _pend[p].d     = d;
+                return;
+            }
+            // All four slots busy (a crowd of rotating tags): no waiting.
         }
     }
     pushLog(d);
