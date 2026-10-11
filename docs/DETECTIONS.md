@@ -307,6 +307,33 @@ the same way.
 
 ---
 
+## Trackers that change their address (fork addition)
+
+AirTags, Google Find My tags and Samsung SmartTags change their Bluetooth
+address every fifteen minutes or so, and nothing else in the advert carries
+over -- by design, so nobody can follow a tag around. Taken at face value,
+each change is a new device: a new LOG row, a new alert, and an IGNORE that
+stops working a quarter of an hour later.
+
+What does carry over is continuity: the old address goes quiet and a new one
+of the same type appears at about the same strength. A new address of one of
+these types that arrives while a row of the same type has just gone quiet is
+held back for eight seconds. If that row stays silent the whole time, the new
+address takes it over -- same row, counts, IGNORE, SNOOZE, watch and hunt --
+and `[rotate] ... same tag` is printed on the console. If not, it is posted
+as the new device it is, eight seconds late.
+
+IGNORE on one of these reuses an entry of the same type whose address is no
+longer heard, so the same tag ignored again after a restart (when it has
+rotated beyond recognition) does not add an entry each time.
+
+**Limit:** this is inference, not identification. A different tag of the same
+type that appears within those eight seconds of yours going quiet, at about
+the same strength, would take your tag's row over, IGNORE included. With
+your own tags in your pocket that is unlikely, but it is not impossible.
+
+---
+
 ## Tile trackers — `TILE` — **High confidence**
 
 **Why it works:** Tile devices advertise under two 16-bit Bluetooth
