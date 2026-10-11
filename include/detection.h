@@ -174,6 +174,11 @@ public:
     // moves under AUTO SNOOZE. True to the RAM log only -- a device evicted
     // from the ring and seen again reads as new, as the LOG screen shows it.
     bool latestIsNew() const { return _latestNew; }
+    // Trackers whose address rotates (AirTag, Google Find My, SmartTag): the
+    // LOG follows them across the change -- see PendingLink below.
+    static bool rotatesAddress(DetectionType t);
+    // This address is in the log and still being heard.
+    bool macLive(const uint8_t* mac) const;
     uint16_t countByType(DetectionType t) const { return _typeCounts[(uint8_t)t]; }
 
     // Lifetime total across reboots (persisted to NVS), unlike the
@@ -657,6 +662,32 @@ private:
     uint32_t    _channelLastMs[14]   = {0};
 
     void pushLog(const Detection& d);
+
+    // ---- Address handover for trackers that rotate (fork addition) -------
+    // AirTags, Google Find My tags and SmartTags change their Bluetooth
+    // address every fifteen minutes or so, and nothing else in the advert
+    // stays the same across the change -- that is the privacy feature. Seen
+    // naively, every change is a new device: a new LOG row, a new alert, an
+    // IGNORE that stops working, and a "vanished" address for the fake-flood
+    // count. What does carry over is continuity: the old address goes quiet
+    // and a new one of the same type appears at about the same strength.
+    //
+    // So a new address of such a type, arriving while a row of the same type
+    // has just gone quiet, is held back for LINK_WAIT_MS. If that quiet row
+    // stays quiet the whole time (a tag still advertising under its old
+    // address would have been heard again by then), the new address takes
+    // the row over: same row, same counts, same IGNORE/SNOOZE, same watch or
+    // hunt. Otherwise it is posted as the new device it is, just late.
+    // Everything runs on the Bluetooth task, where postBle() already runs.
+    static const uint8_t  PEND_CAP      = 4;
+    static const uint32_t LINK_WAIT_MS  = 8000;
+    static const uint32_t LINK_QUIET_MS = 1000;   // a row this quiet may be the old address
+    static const int8_t   LINK_RSSI_DB  = 15;     // and about this close in strength
+    struct PendingLink { bool used; uint32_t since; Detection d; };
+    PendingLink _pend[PEND_CAP] = {};
+    bool        linkCandidate(const Detection& d, uint32_t quietSince, int8_t rssi, uint32_t now) const;
+    void        resolvePending(uint32_t now);
+    void        handOver(Detection& row, const Detection& d);
     void processWiFiQ();
     void processDeauthQ();
     void expireStale();

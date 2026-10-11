@@ -39,6 +39,19 @@ namespace IgnoreList {
 
     bool remove(const uint8_t* mac);
 
+    // A tracker that rotates its address took a new one (see the engine's
+    // handover): the entry follows it, in RAM only. Writing NVS every
+    // fifteen minutes per tag would wear the flash for nothing -- after a
+    // restart the tag has rotated again anyway. False when `from` is not on
+    // the list.
+    bool rekey(const uint8_t* from, const uint8_t* to);
+    // IGNORE on a device of a type that rotates its address: rather than a
+    // new entry every time the same tag comes back under a new address (one
+    // per restart, filling the list), an entry of the same type whose
+    // address is no longer around is reused. `live` says whether an address
+    // is currently being heard. Same return as add().
+    bool addRotating(const uint8_t* mac, DetectionType type, bool (*live)(const uint8_t* mac));
+
     uint8_t count();
 
     // nullptr when idx is out of range. Points into the module's own
