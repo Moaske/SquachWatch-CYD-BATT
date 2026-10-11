@@ -52,14 +52,23 @@ EM_JS(void, squachsim_nvs_write, (const char* key, const char* val), {
 #include "sim_touch.h"
 #include "sim_detections.h"
 #include "meshsim.h"
+#include "squachy.h"
+#include "frame_push.h"
+#include "blackbox.h"
+#include "clock.h"
+#include "settings.h"
 
-// Defined by the firmware's main.cpp, which this target compiles.
+// Defined by the firmware's main.cpp, which this target compiles. Declared
+// here, outside the extern "C" block below, so they link as the C++ symbols
+// main.cpp defines.
 void setup();
 void loop();
+void simResizeFrame(int w, int h);
 extern TFT_eSPI tft;
 extern AppState state;
 extern uint8_t  screenRotation;
 extern DetectionEngine engine;
+extern volatile bool g_consoleRotate;
 
 // pollTouch()'s XPT2046 defaults. Static inside main.cpp, but the
 // Preferences shim starts empty in the browser so loadOrDefaultCal()
@@ -123,6 +132,18 @@ EMSCRIPTEN_KEEPALIVE void sw_step(int n) {
     }
 }
 
+// One loop() iteration that moves the clock on by the REAL time since the
+// last one, for a host that cannot keep up with the device's 33 fps (a
+// slow phone manages about 22): the board's animations already scale to
+// elapsed time, so this keeps Squachy at the board's speed, just with fewer
+// frames. Capped so a backgrounded page does not come back a minute ahead.
+EMSCRIPTEN_KEEPALIVE void sw_step_ms(int ms) {
+    if (ms < 1) ms = 1;
+    if (ms > 100) ms = 100;
+    SimClock::nowMs += (uint32_t)ms;
+    loop();
+}
+
 // Converts the sprite's RGB565 to RGBA and returns the buffer address.
 // Sized on every call because a rotation changes the geometry.
 EMSCRIPTEN_KEEPALIVE uint8_t* sw_frame() {
@@ -168,6 +189,28 @@ EMSCRIPTEN_KEEPALIVE int sw_detect(int profile, int rssi) {
     return 1;
 }
 
+// A catch the phone app kept, into the LOG without an alert: the app replays
+// its saved catches when the emulator starts, so the band's LOG is the phone's
+// history rather than whatever arrived since. `tail` is the last three bytes of
+// the address, which is all a heads-up carries; the profile supplies the rest.
+EMSCRIPTEN_KEEPALIVE int sw_log_catch(int profile, int rssi, int tail, double epoch,
+                                      int hasPos, double lat, double lon) {
+    if (profile < 0 || (size_t)profile >= kSimProfileCount) return 0;
+    Detection d;
+    simMakeDetection(d, kSimProfiles[profile], millis(), rssi, 0);
+    d.mac[3] = (uint8_t)(tail >> 16); d.mac[4] = (uint8_t)(tail >> 8); d.mac[5] = (uint8_t)tail;
+    BlackBox::noteDetectionAt(d, false, (uint32_t)epoch, hasPos != 0,
+                              (int32_t)(lat * 1e7), (int32_t)(lon * 1e7));
+    return 1;
+}
+
+// The phone's clock and zone (an index into clock.cpp's ZONES, or -1), so the
+// emulator's times -- the LOG's, the desk clock's -- are the phone's.
+EMSCRIPTEN_KEEPALIVE void sw_set_time(double epoch, int zone) {
+    Clock::setEpoch((uint32_t)epoch);
+    if (zone >= 0) Settings::setTimeZone((uint8_t)zone);
+}
+
 // [[index, "TYPE", "label"], ...] -- the page's picker, from the same table.
 EMSCRIPTEN_KEEPALIVE const char* sw_det_catalog() { return simProfileCatalog(); }
 
@@ -177,6 +220,54 @@ EMSCRIPTEN_KEEPALIVE const char* sw_det_catalog() { return simProfileCatalog(); 
 EMSCRIPTEN_KEEPALIVE int         sw_mesh(const char* cmd) { return MeshSim::command(cmd) ? 1 : 0; }
 EMSCRIPTEN_KEEPALIVE const char* sw_mesh_status()        { return MeshSim::status(); }
 EMSCRIPTEN_KEEPALIVE const char* sw_mesh_catalog()       { return MeshSim::catalog(); }
+
+// For a host that is not a 320x240 board -- the phone app. Call before
+// sw_setup(): `w` x `h` is the panel's landscape shape (w >= h), and from
+// then on the rotate icon swaps the two sides the way a real panel does.
+// Every screen already composes itself against tft.width()/height(), the
+// same property the native emulator's --size leans on. The web page never
+// calls this, so it keeps the board's own 320x240 and its fixed landscape.
+EMSCRIPTEN_KEEPALIVE void sw_panel(int w, int h) {
+    if (w < h) { const int t = w; w = h; h = t; }
+    if (h >= 64 && w <= 1024) tft = TFT_eSPI(w, h);
+    TFT_eSPI::rotates = true;
+}
+
+// The firmware's own rotate path (the console ROTATE command), so the
+// frame buffer, the saved rotation and Squachy's reaction all happen as
+// they do for a tap on the icon.
+EMSCRIPTEN_KEEPALIVE void sw_rotate() { g_consoleRotate = true; }
+
+// A new panel while running, `w` x `h` AS SHOWN: the phone app's band is the
+// board's own screen upright (240x320), its SQUACHY tab is phone-shaped. A
+// board could never do this (the frame buffer is allocated once, and only a
+// rotation's same-count reshape is ever asked of it); the sim's sprite
+// re-buffers on a resize, so here it is one assignment and a reshape. The
+// rotation is set to match the shape, odd being landscape on these boards,
+// and is not saved: it is the host's choice, not the person's.
+EMSCRIPTEN_KEEPALIVE void sw_resize(int w, int h) {
+    if (w < 64 || h < 64 || w > 1024 || h > 1024) return;
+    const bool land = w >= h;
+    tft = TFT_eSPI(land ? w : h, land ? h : w);
+    TFT_eSPI::rotates = true;
+    screenRotation = land ? 1 : 0;
+    tft.setRotation(screenRotation);
+    simResizeFrame(tft.width(), tft.height());
+    FramePush::invalidate();
+}
+
+// A line from the host, said once in his bubble: the phone app's status and
+// setup lines ("Let me use Bluetooth?"). Copied, because say() keeps the
+// pointer for as long as the bubble is up and JS strings do not outlive the
+// call.
+EMSCRIPTEN_KEEPALIVE void sw_say(const char* text) {
+    static char line[96];
+    if (!text) return;
+    size_t i = 0;
+    for (; i < sizeof line - 1 && text[i]; i++) line[i] = text[i];
+    line[i] = 0;
+    Squachy::announce(line);
+}
 
 EMSCRIPTEN_KEEPALIVE int sw_state()    { return (int)state; }
 EMSCRIPTEN_KEEPALIVE int sw_rotation() { return (int)screenRotation; }

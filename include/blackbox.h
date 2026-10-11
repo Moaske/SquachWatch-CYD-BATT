@@ -47,6 +47,16 @@ static const uint8_t DET_AGAIN   = 0x01;   // came back after going quiet
 // without it (channel 0) was kept backwards, and forEachDetection() turns it
 // round as it hands it on.
 static const uint8_t DET_PRINTED = 0x02;
+// Where it was: the GPS had a fresh position when it was noted -- a board's own
+// module, or a phone in the squad sending its own (gnss.h). The position takes
+// the last eight bytes of `name`, which is cut to eleven characters to make
+// room; a record without the flag keeps the whole twenty. detPosition() reads it.
+static const uint8_t DET_POS     = 0x04;
+bool detPosition(const DetRecord& r, int32_t& lat7, int32_t& lon7);
+// The newest position kept for this device, if any record of it has one: what
+// the LOG screen's long-press shows as "seen at". Reads the whole ring, so it
+// is for a tap, not for a frame.
+bool lastPosition(const uint8_t mac[6], uint8_t type, int32_t& lat7, int32_t& lon7);
 
 // One boot. When it followed a crash, the crash is in here too, from the
 // breadcrumb and the core dump summary (see crashReportInit() in main.cpp).
@@ -122,6 +132,10 @@ uint16_t bootNumber();
 void noteBoot(BootRecord& r);
 
 void noteDetection(const Detection& d, bool again);
+// The same, with the time and place given rather than read now: for the phone
+// app's emulator, which replays the phone's saved catches into its LOG when it
+// starts (sim/main_wasm.cpp, sw_log_catch). Nothing on a board calls it.
+void noteDetectionAt(const Detection& d, bool again, uint32_t epoch, bool hasPos, int32_t lat7, int32_t lon7);
 // LOG's CLR: a mark, not an erase. What came before it is not shown again,
 // and the ring wears it away like anything else.
 void markCleared();

@@ -773,6 +773,19 @@ static bool touchCalPlausible(const uint16_t* p) {
 // Rotation is applied after the Fit, so one calibration serves all four.
 static TouchFit::Fit s_touchFit = TouchFit::fromRanges(RAW_X_MIN, RAW_X_MAX, RAW_Y_MIN, RAW_Y_MAX, 240, 320);
 
+// The phone app's emulator changes its panel while it runs (sim/main_wasm.cpp,
+// sw_resize): the band above the lists is the board's own upright screen, full
+// screen is phone-shaped. The sim's sprite re-buffers itself on a resizeInPlace()
+// to a new size, which a board's never could. The touch fit is rebuilt for the new
+// panel too: kept from boot, it stretched a tap near the bottom of the 240x320 band
+// past the button bar, so LOG and DESK never answered. Only the emulator calls
+// this; on a board it is a few bytes nobody reaches.
+void simResizeFrame(int w, int h) {
+    if (frame.created()) frame.resizeInPlace((int16_t)w, (int16_t)h);
+    const int n0 = w < h ? w : h, n1 = w < h ? h : w;      // the panel's own upright frame
+    s_touchFit = TouchFit::fromRanges(RAW_X_MIN, RAW_X_MAX, RAW_Y_MIN, RAW_Y_MAX, n0, n1);
+}
+
 // Where s_touchFit came from, for the diagnostics screen and for deciding
 // whether boot has to ask for a calibration.
 enum class CalSource : uint8_t { BUILT_IN, OLD_SAVED, SAVED };
@@ -1484,15 +1497,46 @@ static bool     s_onUsb = true;
 static bool s_radiosResting = false;   // the duty cycle's state; see twatchRadioTick()
 #endif
 #if defined(TWATCH_S3) || SQW_BOOT_BTN
-// A crown press (or the CYDs' BOOT button) with the screen on turns it off
-// at once, cable or not. It stays off until the next touch, press or alert:
-// lastTouch moving past this moment is what ends it.
+// POCKET MODE. A crown press (or the CYDs' BOOT button) with the screen on
+// turns it off at once, cable or not, and only another press turns it back
+// on: a touch does not, so a board in a pocket or a bag cannot be woken by
+// whatever it is rubbing against. Alerts still borrow the screen while they
+// are up (see the power saver in loop()), then it goes dark again.
 static bool     s_crownDark   = false;
-static uint32_t s_crownDarkAt = 0;
-// After an alert lights a button-darkened screen, it stays lit until this
-// moment -- the screen timeout, counted from the alert's end -- then goes
-// dark again. 0 = no alert has lit it.
-static uint32_t s_crownLitUntil = 0;
+// When the button was pressed: an alert already on screen then is one the
+// press was meant to put out, so only alerts after it light the screen.
+static uint32_t s_crownPressAt = 0;
+// The first time ever, the screen stays on a moment to say how to get out.
+static uint32_t s_pocketNoteUntil = 0;
+static const uint32_t POCKET_NOTE_MS = 4000;
+#if defined(TWATCH_S3)
+static const char* const POCKET_HOW = "Press the crown to wake";
+#else
+static const char* const POCKET_HOW = "Press BOOT again to wake";
+#endif
+
+// Every short press of the button: in or out of pocket mode, or just a wake
+// when it was the screen timeout that dimmed the screen.
+static void pocketPress(uint32_t now) {
+    if (s_crownDark) {
+        s_crownDark = false;
+        s_pocketNoteUntil = 0;
+        lastTouch = now;
+        Serial.println("[pocket] off");
+    } else if (s_screenDimmed) {
+        lastTouch = now;
+    } else {
+        s_crownDark = true;
+        s_crownPressAt = now;
+        if (!Settings::pocketNoteShown()) {
+            Settings::markPocketNoteShown();
+            s_pocketNoteUntil = now + POCKET_NOTE_MS;
+            if (!s_pocketNoteUntil) s_pocketNoteUntil = 1;
+            Theme::showToast("POCKET MODE", POCKET_HOW, Theme::CYAN, POCKET_NOTE_MS);
+        }
+        Serial.println("[pocket] on");
+    }
+}
 #endif
 
 static void applyCpuClock();
@@ -2163,6 +2207,10 @@ volatile bool g_consoleAdc = false;     // ADC: the spare analog inputs, for fin
 volatile bool g_consoleXyzzy = false;   // XYZZY: the TERMINAL background types the magic word now
 volatile bool g_consoleClippy = false;    // CLIPPY: unlock C1iPPY, for the bench
 volatile bool g_consoleToaster = false;   // TOASTER: unlock T0@$TY, for the bench
+volatile bool g_consoleBall    = false;   // BALL: unlock the ball and chain as a pet, for the bench
+volatile bool g_consolePet     = false;   // PET: the next earned pet, as the Settings row would
+volatile bool g_consoleJail = false;      // JAIL: the arrest, for the bench
+volatile bool g_consoleFree = false;      // FREE: time served, now
 volatile uint8_t g_consoleHeadsUp = 0;   // HEADSUP n: tell the squad about a made-up catch of type n, for the bench
 volatile bool g_consoleLegend = false;  // LEGEND: wear the Legend look (and its aura) until the next boot, or take it off
 volatile bool g_consoleOutfitSet = false;  // OUTFIT n: wear costume n until the next boot, for timing it; -1 takes it off
@@ -3399,18 +3447,7 @@ static void twatchCrownTick(uint32_t now) {
     // buzzes, about 1.5 s) is surely over.
     if (s_drvAwakeAt && now - s_drvAwakeAt > 3000) { s_drvAwakeAt = 0; drvWrite(0x01, 0x40); }
     s_pmu.getIrqStatus();
-    if (s_pmu.isPekeyShortPressIrq()) {
-        if (!s_screenDimmed) {
-            s_crownDark = true;
-            s_crownDarkAt = now;
-            s_crownLitUntil = 0;
-            Serial.println("[crown] screen off");
-        } else {
-            s_crownDark = false;
-            lastTouch = now;
-            Serial.println("[crown] screen on");
-        }
-    }
+    if (s_pmu.isPekeyShortPressIrq()) pocketPress(now);
     s_pmu.clearIrqStatus();
 }
 #endif
@@ -3498,6 +3535,9 @@ static void wardriveBegin();
 void setup() {
 #if defined(BOARD_BATT_PIN)
     flatBootCheck();   // asleep on a flat cell? back to sleep before anything else wakes up
+#endif
+#if defined(ARDUINO_ARCH_ESP32) && !defined(CROWPANEL7)
+    g_frameSprite = &frame;
 #endif
     // Before anything else can allocate: the breadcrumb has to be read out
     // while it is still the previous life's, not this one's.
@@ -4859,8 +4899,7 @@ static void bootButtonTick(uint32_t now) {
     if (!down && was && !longDone && now - downAt >= 30) {
         Serial.println("[button] short press");
         if (s_chargeMode) exitChargeMode();
-        else if (!s_screenDimmed) { s_crownDark = true; s_crownDarkAt = now; s_crownLitUntil = 0; }
-        else { s_crownDark = false; lastTouch = now; }
+        else pocketPress(now);
     }
     was = down;
 }
@@ -5060,7 +5099,8 @@ void loop() {
     // so a wake tap that turns into a drag cannot scroll a list either.
     //
     // lastTouch is still updated here, because that is what actually undims
-    // on the next frame -- the touch is being consumed, not ignored.
+    // on the next frame -- the touch is being consumed, not ignored. In
+    // POCKET MODE it undims nothing: only the button does.
     static bool s_swallowTouch = false;
     if (s_screenDimmed && touchJustDown) {
         s_swallowTouch = true;
@@ -5291,6 +5331,18 @@ void loop() {
         Squachy::unlockClippy("It looks like you're having trouble typing.");
         Serial.println("[pet] C1iPPY unlocked and put on");
     }
+    if (g_consoleJail) {
+        g_consoleJail = false;
+        Pet::arrest(millis());
+        Serial.println("[jail] arrested: ten minutes");
+    }
+    if (g_consoleFree) {
+        g_consoleFree = false;
+        Squachy::jailFree();
+        Serial.println("[jail] time served");
+    }
+    if (g_consoleBall) { g_consoleBall = false; Squachy::unlockBall(); Serial.println("[pet] ball and chain unlocked"); }
+    if (g_consolePet)  { g_consolePet = false; Squachy::cyclePet(); Serial.printf("[pet] now %s\n", Squachy::petName()); }
     if (g_consoleToaster) {
         g_consoleToaster = false;
         Squachy::unlockToaster("Reporting for duty. I'm not scared.");
@@ -6587,6 +6639,11 @@ void loop() {
                         const char* lbl = d->name[0] ? d->name : vendorText(*d);
                         strncpy(s_confirmLabel, lbl, sizeof(s_confirmLabel) - 1);
                         s_confirmLabel[sizeof(s_confirmLabel) - 1] = 0;
+                        {
+                            int32_t la = 0, lo = 0;
+                            const bool has = BlackBox::lastPosition(d->mac, (uint8_t)d->type, la, lo);
+                            uiLogSetConfirmWhere(has, la, lo);
+                        }
                         s_confirmPending = true;
                         s_confirmArmed   = false;
                     }
@@ -7060,8 +7117,16 @@ void loop() {
                             break;
                         case SettingsRow::SHADES_COLOR: Squachy::cycleShadesColor(); break;
                         case SettingsRow::SQUACHY_SIZE: Settings::cycleSquachySize(); break;
-                        case SettingsRow::OUTFIT:       enterOutfit(); break;
-                        case SettingsRow::PET:          Squachy::cyclePet(); break;
+                        case SettingsRow::OUTFIT:
+                        case SettingsRow::PET:
+                            if (Squachy::jailed()) {
+                                const uint32_t left = (Squachy::jailLeftMs() + 999) / 1000;
+                                char b[24];
+                                snprintf(b, sizeof(b), "%u:%02u left. Behave.", (unsigned)(left / 60), (unsigned)(left % 60));
+                                Theme::showToast("SERVING TIME", b, Theme::AMBER, 2500);
+                            } else if (row == SettingsRow::OUTFIT) enterOutfit();
+                            else Squachy::cyclePet();
+                            break;
                         case SettingsRow::BANTER:       Settings::cycleBanter(); break;
                         case SettingsRow::VIEW_DIARY:   enterDiary(); break;
                         case SettingsRow::BINGO:        enterBingo(); break;
@@ -8261,37 +8326,31 @@ void loop() {
         if (s_onUsb) wantDim = false;
 #endif
 #if defined(TWATCH_S3) || SQW_BOOT_BTN
-        // The crown, which beats the cable, the desk and a timeout of NEVER.
-        // A touch since the press, or an alert that wants the screen, ends it.
+        // POCKET MODE, which beats the cable, the desk and a timeout of NEVER.
+        // Only the button ends it (pocketPress); a touch never does.
         //
-        // An alert lights it without ending it: once the alert is over the
-        // screen goes dark again after the screen timeout (30 s when that is
-        // NEVER), the way it would on battery. Taps on the alert card -- the
-        // one that dismisses it above all -- do not count as the touch that
-        // ends crown mode; a touch after that does.
+        // Things that need to be seen borrow the screen without ending it:
+        // an alert card for as long as it is up on its own (ten seconds; a
+        // WATCH card, which waits for a tap, goes dark with the card still
+        // on it), a squad member's update offer or invite for its countdown,
+        // and the first-time note. Then it is dark again, no Squachy after.
         {
-            static bool wasAlerting = false;
-            if (s_crownDark) {
-                if (alerting || wasAlerting) s_crownDarkAt = now;
-                if (wasAlerting && !alerting) {
-                    uint32_t t = Settings::screenTimeoutSecRaw();
-                    if (!t) t = 30;
-                    s_crownLitUntil = now + t * 1000UL;
-                    if (!s_crownLitUntil) s_crownLitUntil = 1;
-                }
-                if ((int32_t)(lastTouch - s_crownDarkAt) > 0) s_crownDark = false;
-            }
-            wasAlerting = alerting;
-        }
-        if (s_crownDark) {
-            const bool alertWants = Settings::wakeOnAlert() && alerting;
-            const bool lit = s_crownLitUntil && (int32_t)(s_crownLitUntil - now) > 0;
-            wantDim = !alertWants && !lit;
+            const uint32_t shownAt = state == AppState::WATCH_ALERT ? watchAlertStart : alertStart;
+            const bool alertLit = alerting && Settings::wakeOnAlert() &&
+                                  (int32_t)(now - shownAt) < (int32_t)ALERT_AUTO_DISMISS_MS &&
+                                  (int32_t)(shownAt - s_crownPressAt) > 0;
+            const bool askLit  = state == AppState::NUDGE || state == AppState::INVITE;
+            const bool noteLit = s_pocketNoteUntil && (int32_t)(s_pocketNoteUntil - now) > 0;
+            if (!noteLit) s_pocketNoteUntil = 0;
+            if (s_crownDark) wantDim = !alertLit && !askLit && !noteLit;
         }
 #endif
         if (wantDim != s_screenDimmed) {
             s_screenDimmed = wantDim;
             applyBrightness();
+#if defined(TWATCH_S3) || SQW_BOOT_BTN
+            if (s_crownDark) Serial.println(wantDim ? "[pocket] screen dark" : "[pocket] screen lit for an alert");
+#endif
         }
 
         // Auto-lock, on the saver's idle clock: after N idle minutes, or the

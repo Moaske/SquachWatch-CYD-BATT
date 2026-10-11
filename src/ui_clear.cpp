@@ -2021,6 +2021,9 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
         // him. Four or fewer and everybody wears one; past that only the
         // one who was tapped, for a few seconds.
         Squachy::setNameTag(wantsName(i) ? peerName(i) : nullptr);
+        // A phone (the companion app) wears the WATCH screen's headset: it can't
+        // catch anything itself, and at a glance it looks like any other board.
+        Squachy::setHeadset(p.phone);
         const char* line = (isGuest && !msgFresh) ? s_visitGuestLine : nullptr;
         // His bubble hangs from the caller's row when it names one; the gap
         // is taken from where his head is this frame, so the bubble holds
@@ -2038,6 +2041,7 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
                             isGuest && !s_guestTurn, line != nullptr,
                             isGuest ? guestPose(now) : Squachy::VisitPose::NONE);
         Squachy::setNameTag(nullptr);
+        Squachy::setHeadset(false);
         Squachy::setAuraPreview(-1);
         Squachy::setShadesPreview(-1);
         Squachy::setOutfitPreview(-1);
@@ -2088,12 +2092,16 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
         const int k = peerCell(i);
         drawOne(i, cellX(k, i, true), cellY(k, i, true), false);
     }
-    // 2. the visitor, bubble and all.
+    // 2. the visitor. His bubble is held back and drawn after ours (step 4):
+    //    ours sits in the middle seat, and drawn after the words he stood on
+    //    them -- which crowds of phones and boards on a bench made common.
     if (guestI >= 0) {
         const uint8_t i = (uint8_t)guestI;
         const int k = peerCell(i);
         const int cx = cellX(k, i, true), baseY = cellY(k, i, true);
+        Squachy::deferBubble(true);
         drawOne(i, cx, baseY, true);
+        Squachy::deferBubble(false);
     }
     // 3. and ours last of all, in the seat that does not move. He is drawn
     //    through tick(), which owns his moods, his quips and his bubble, so he
@@ -2142,6 +2150,8 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
         Squachy::tick(t, cx, bandTop, band, now, advance, 0.3f, false, 0, (uint8_t)pct);
         Squachy::setCompany(false);
     }
+    // 4. the visitor's words, over everybody.
+    Squachy::drawDeferredBubble(t, now);
 }
 
 // A tap on one of the crowd: puts his name up for a few seconds. Ours is
@@ -2739,6 +2749,7 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
     // meet, so he is named for the whole visit, talking or not.
     Squachy::setNameTag((guest->custom && guest->name[0]) ? guest->name
                                                           : Squachy::nicknameAt(guest->nick));
+    Squachy::setHeadset(guest->phone);   // a phone wears the headset, as in the crowd
     Squachy::drawWaving(t, gx, squachyBottom - scriptGuestLift(now, gs,
                             squachyBottom - (int)(58.0f * gs) - 20), now, gs,
                         msgFresh ? nullptr : s_visitGuestLine,
@@ -2762,6 +2773,7 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         true,
                         guestPose(now));
     Squachy::setNameTag(nullptr);
+    Squachy::setHeadset(false);
     Squachy::setAuraPreview(-1);
     Squachy::setShadesPreview(-1);
     Squachy::setOutfitPreview(-1);
@@ -2924,6 +2936,20 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     const uint8_t rowsKept  = (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
     const int bandTop       = xp ? tilesTop + rowsKept * lineH : titleBottom;
     const int squachyBottom = xp ? bar.y - 1 : counterTextTop - 2;
+    // A panel far taller than it is wide -- the phone app's emulator, shaped
+    // like the phone; no board is -- would hand him a band twice his usual
+    // height, and he grows to fill whatever he is given, so he came out
+    // enormous with his feet sunk behind the buttons. Above 8:5 his band stops
+    // at nine tenths of the panel's width and the sky has the rest. Every real
+    // panel is under 8:5, so none of this runs on a board.
+    // On a panel that tall he also stands a fifth of the way up rather than on
+    // the buttons: down there he was a small figure at the foot of a long empty
+    // sky; up in the ground band he is standing in the scene. Picked from five
+    // renders at 240x533 (sizes 110/90/75% of the width, on the buttons or raised).
+    const bool tallPanel    = h * 5 > w * 8;
+    const int sqFeet        = tallPanel ? h * 4 / 5 : squachyBottom;
+    const int sqCap         = sqFeet - w * 9 / 10;
+    const int sqTop         = (tallPanel && sqCap > bandTop) ? sqCap : bandTop;
     // Measured: feet ended 6 rows above the bar; CLASSIC never sank them.
     const int SQ_FOOT_SINK  = xp ? 6 : 0;
 
@@ -2993,7 +3019,7 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // A test build: the crowd benchmark stands in for the Squachys while it
     // runs, and the visit machine sits it out.
     if (CrowdBench::active() && !Settings::boringMode())
-        CrowdBench::draw(t, now, bandTop, squachyBottom);
+        CrowdBench::draw(t, now, sqTop, squachyBottom);
     else
 #endif
     if (!Settings::boringMode()) {
@@ -3046,15 +3072,15 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         const uint8_t peerCap = (uint8_t)((crowdMax > 8 ? 8 : crowdMax) - 1);
         if (crowdMax > 1) crowdN = Mesh::squadList(now, crowd, peerCap);
         if (crowdMax > 1 && crowdN >= 2) {
-            uiClearDrawCrowd(t, now, crowd, crowdN, bandTop, squachyBottom, step, msgFresh, 22);
+            uiClearDrawCrowd(t, now, crowd, crowdN, sqTop, squachyBottom, step, msgFresh, 22);
         } else if (guest) {
-            drawVisit(t, now, guest, bandTop, squachyBottom, step, msgFresh);
+            drawVisit(t, now, guest, sqTop, squachyBottom, step, msgFresh);
         } else
 #endif
         // His band runs a few rows INTO the bar: the bottom of it is where
         // his shadow goes, under his feet, and the bar paints over that --
         // so his soles, not his shadow, land on the bar's top line.
-        Squachy::tick(t, w / 2, bandTop, squachyBottom + SQ_FOOT_SINK - bandTop, now, step,
+        Squachy::tick(t, w / 2, sqTop, sqFeet + SQ_FOOT_SINK - sqTop, now, step,
                       1.0f, false, -1, Settings::squachySizePct());
         Squachy::setBubbleRiseTo(-1);
 #if SQUACH_MESH
