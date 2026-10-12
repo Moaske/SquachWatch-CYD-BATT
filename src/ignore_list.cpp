@@ -236,6 +236,10 @@ bool snooze(const uint8_t* mac, SnoozeDuration duration) {
     }
     return true;
 }
+void snooze(const uint8_t* mac) {
+    (void)snooze(mac, SnoozeDuration::HOUR_1);
+}
+
 bool unsnooze(const uint8_t* mac) {
     begin();
     pruneSnoozes();
