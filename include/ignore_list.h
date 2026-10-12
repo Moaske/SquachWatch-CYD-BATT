@@ -56,6 +56,7 @@ namespace IgnoreList {
     enum class SnoozeDuration : uint8_t { MIN_10, MIN_30, HOUR_1, ALWAYS };
     static const uint8_t SNOOZE_MAX = 32;
     bool snooze(const uint8_t* mac, SnoozeDuration duration);
+    void snooze(const uint8_t* mac);
     bool unsnooze(const uint8_t* mac);
     uint8_t snoozeCount();
     bool snoozeInfo(uint8_t idx, uint8_t mac[6], uint32_t& remainingMs, bool& always);
