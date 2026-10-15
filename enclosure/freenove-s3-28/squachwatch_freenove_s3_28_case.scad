@@ -1,9 +1,10 @@
 // SquachWatch case for the Freenove ESP32-S3 Display 2.8" (FNK0104A/B)
 //
-// Two printed parts:
-//   back  - tub with standoffs, prints floor-down
-//   bezel - front frame; the four M3 screws come up from the back, through
-//           the standoffs and the board, and thread into its bosses
+// Two printed parts, press-fit, no screws:
+//   back  - tub; printed pins on its four posts drop into the board's 3.2 mm
+//           holes. Prints floor-down
+//   lid   - front frame; crush ribs inside its skirt grip the tub's top step,
+//           and four bosses press the board's ends down onto the posts
 //
 // RESET and BOOT sit either side of the USB-C, facing the back of the board,
 // ~10 mm above the floor. Each gets a paperclip hole in the floor with a guide
@@ -15,7 +16,9 @@
 // Coordinates: looking at the screen, USB-C end on the left, the edge with the
 // SPEAKER / I2C / IO connectors at the bottom. Origin = PCB bottom-left corner.
 //
-// Render one part:  openscad -D 'part="back"' -o back.stl squachwatch_freenove_s3_28_case.scad
+// The default part, "print", lays the tub and the lid side by side as two
+// separate bodies, ready to slice. Or render one part:
+//   openscad -D 'part="back"' -o squachwatch_freenove_s3_28_back.stl squachwatch_freenove_s3_28_case.scad
 
 part = "print"; // [print, back, bezel, assembly]
 
@@ -28,7 +31,10 @@ btn_h = 2.0;
 /* [Fit] */
 fit = 0.3;          // side gap (the glass is as wide as the PCB)
 end_fit = 0.6;      // end gap (USB-C pokes out ~0.3)
-bezel_fit = 0.15;
+bezel_fit = 0.15;   // gap between lid skirt and tub step
+rib_interf = 0.2;   // crush-rib bite into the tub step (raise if loose)
+pin_d = 3.0;        // locating pins into the 3.2 mm holes
+pin_h = 1.3;
 wall = 2.2;
 floor_t = 2.0;
 
@@ -43,6 +49,12 @@ io_ports = true;    // I2C, IO and UART connectors
 sd_slot = true;
 mic_hole = true;
 speaker = true;     // pocket + grille
+
+/* [Lettering] */
+logo = "SQUACHWATCH";   // engraved on the back; "" for none
+logo_size = 4.6;
+logo_len = 34;          // engraving length
+logo_center = [66, 25]; // beside the speaker grille, over the battery space
 
 /* [Speaker] */
 spk_l = 38;
@@ -95,10 +107,6 @@ tube_d = 4.2;
 tube_top = z_pcb_bot - btn_h - 0.6;
 funnel_d = 4.0;                       // countersink on the outside
 
-pilot_top = z_glass + bezel_t - 0.8;
-// longest stock length that stays inside the pilot hole
-screw_len = max([for (l = [10, 12, 14, 16, 18, 20, 22, 25]) if (l <= pilot_top - floor_t) l]);
-echo(str("Screws: 4x M3 x ", screw_len, " mm pan head"));
 echo(str("Case: ", out_l, " x ", out_w, " x ", z_glass + bezel_t, " mm"));
 
 module rr2d(w, h, r) offset(r = r) offset(delta = -r) square([w, h]);
@@ -128,16 +136,17 @@ module back() {
                 }
                 translate([0, 0, floor_t]) linear_extrude(tub_h) cav2d();
             }
-            for (h = holes) translate([h[0], h[1], floor_t - eps])
+            for (h = holes) translate([h[0], h[1], floor_t - eps]) {
                 cylinder(d = 6.5, h = z_pcb_bot - floor_t + eps);
+                // pin into the board's hole, chamfered tip
+                translate([0, 0, z_pcb_bot - floor_t]) {
+                    cylinder(d = pin_d, h = pin_h - 0.4);
+                    translate([0, 0, pin_h - 0.4]) cylinder(d1 = pin_d, d2 = pin_d - 0.6, h = 0.4);
+                }
+            }
             for (b = btns) translate([b[0], b[1], floor_t - eps])
                 cylinder(d = tube_d, h = tube_top - floor_t + eps);
             if (speaker) speaker_frame();
-        }
-
-        for (h = holes) translate([h[0], h[1], -1]) {
-            cylinder(d = 3.4, h = z_pcb_bot + 2);
-            cylinder(d = 6.2, h = 1 + floor_t);
         }
 
         for (b = btns) translate([b[0], b[1], 0]) {
@@ -163,6 +172,13 @@ module back() {
             translate([sd_x - 6.5, cav_y1 - 1, z_sd - 1.5]) cube([13, wall + 2, 3]);
             translate([sd_x, out_y1 + 3.4, z_sd]) scale([1.8, 1, 0.8]) sphere(r = 4.6);
         }
+
+        // name on the back, reading right way round with the case face-down
+        if (logo != "")
+            translate([logo_center[0], logo_center[1], -eps]) linear_extrude(0.6) mirror([1, 0])
+                resize([logo_len, 0], auto = true)
+                    text(logo, size = logo_size, halign = "center", valign = "center",
+                         font = "Liberation Sans:style=Bold");
 
         if (speaker) grille();
     }
@@ -200,14 +216,34 @@ module bezel() {
             // bosses clamp the PCB ends, outside the glass
             for (h = holes) translate([h[0], h[1], z_pcb_top + 0.1])
                 cylinder(d = 5.6, h = z_glass - z_pcb_top);
+            crush_ribs();
         }
+        // pry notch on the plain right end, for getting the lid off
+        translate([out_x0 + out_l - skirt_t - 1, out_y0 + out_w / 2 - 5, z_glass - skirt_h - 1])
+            cube([skirt_t + 2, 10, 2.2]);
         hull() {
             translate([0, 0, z_glass - eps]) linear_extrude(eps) win2d(0);
             translate([0, 0, z_glass + bezel_t]) linear_extrude(eps * 2) win2d(bezel_t * 0.8);
         }
-        // pilot holes for M3 thread-forming screws
-        for (h = holes) translate([h[0], h[1], z_pcb_top]) cylinder(d = 2.6, h = pilot_top - z_pcb_top);
         if (mic_hole) translate([mic[0], mic[1], z_glass - 1]) cylinder(d = 1.6, h = bezel_t + 2);
+    }
+}
+
+// vertical ribs inside the lid's skirt; they bite into the tub's step
+module crush_ribs() {
+    rh = bezel_fit + rib_interf;
+    z0 = z_glass - skirt_h + 0.8;            // lead-in below the ribs
+    ix0 = out_x0 + skirt_t;  ix1 = out_x0 + out_l - skirt_t;
+    iy0 = out_y0 + skirt_t;  iy1 = out_y1 - skirt_t;
+    for (f = [0.25, 0.5, 0.75]) {            // long sides
+        x = ix0 + (ix1 - ix0) * f;
+        translate([x - 0.5, iy0 - eps, z0]) cube([1, rh + eps, z_glass - z0 + eps]);
+        translate([x - 0.5, iy1 - rh, z0]) cube([1, rh + eps, z_glass - z0 + eps]);
+    }
+    for (f = [1 / 3, 2 / 3]) {               // short ends
+        y = iy0 + (iy1 - iy0) * f;
+        translate([ix0 - eps, y - 0.5, z0]) cube([rh + eps, 1, z_glass - z0 + eps]);
+        translate([ix1 - rh, y - 0.5, z0]) cube([rh + eps, 1, z_glass - z0 + eps]);
     }
 }
 
