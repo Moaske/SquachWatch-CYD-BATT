@@ -1,0 +1,239 @@
+// SquachWatch case for the Freenove ESP32-S3 Display 2.8" (FNK0104A/B)
+//
+// Two printed parts:
+//   back  - tub with standoffs, prints floor-down
+//   bezel - front frame; the four M3 screws come up from the back, through
+//           the standoffs and the board, and thread into its bosses
+//
+// RESET and BOOT sit either side of the USB-C, facing the back of the board,
+// ~10 mm above the floor. Each gets a paperclip hole in the floor with a guide
+// tube that steers the clip onto the switch.
+//
+// Numbers are from the board's outline drawing (LCDWIKI ES3C28P spec, fig 5.1,
+// in Freenove's repo under Datasheet/ES3C28P_ES2N28P_Specification_V1.0.pdf).
+//
+// Coordinates: looking at the screen, USB-C end on the left, the edge with the
+// SPEAKER / I2C / IO connectors at the bottom. Origin = PCB bottom-left corner.
+//
+// Render one part:  openscad -D 'part="back"' -o back.stl squachwatch_freenove_s3_28_case.scad
+
+part = "print"; // [print, back, bezel, assembly]
+
+/* [Measure these on your board] */
+// Floor top -> PCB back. Speaker (10) + tallest part on the PCB back (4.7)
+back_clear = 15;
+// RESET/BOOT switch height off the PCB back, actuator included
+btn_h = 2.0;
+
+/* [Fit] */
+fit = 0.3;          // side gap (the glass is as wide as the PCB)
+end_fit = 0.6;      // end gap (USB-C pokes out ~0.3)
+bezel_fit = 0.15;
+wall = 2.2;
+floor_t = 2.0;
+
+/* [Bezel] */
+bezel_t = 1.2;
+skirt_h = 3;
+skirt_t = 1.0;
+window_margin = 0.25; // beyond the visible window, each side
+
+/* [Openings] */
+io_ports = true;    // I2C, IO and UART connectors
+sd_slot = true;
+mic_hole = true;
+speaker = true;     // pocket + grille
+
+/* [Speaker] */
+spk_l = 38;
+spk_w = 27;
+spk_d = 10;
+spk_center = [28, 25];   // clear of the RESET/BOOT guide tubes
+
+/* [Hidden] */
+$fn = 48;
+eps = 0.01;
+
+// ---- board (outline drawing) ----
+pcb_l = 86;  pcb_w = 50;  pcb_t = 1.6;  pcb_r = 3.5;
+hole_d = 3.2;
+holes = [[4, 4], [82, 4], [4, 46], [82, 46]];      // 78 x 42
+// glass stack above the PCB: glue 0.5 + LCD 2.3 + glue 0.5 + touch 1.0
+stack = 4.3;
+glass_x0 = 8.58;  glass_l = 69.2;                   // 8.22 from the right end
+va_x0 = pcb_l - 10.96 - 58.05;  va_l = 58.05;       // visible window
+va_y0 = 3.2;  va_w = 43.6;
+
+// edge features (from the drawing's back view, mirrored top-to-bottom)
+usb_y = 25;
+btns = [[3.26, 13.44], [3.26, 36.57]];             // RESET, BOOT
+i2c_x = 49.9;   io_x = 67.75;                        // bottom edge (y = 0)
+uart_x = 35.0;  sd_x = 50.97;                        // top edge (y = 50)
+mic = [82, 10];
+
+// ---- derived ----
+cav_x0 = -end_fit;  cav_y0 = -fit;
+cav_l = pcb_l + 2 * end_fit;  cav_w = pcb_w + 2 * fit;
+cav_y1 = cav_y0 + cav_w;
+out_x0 = cav_x0 - wall;  out_y0 = cav_y0 - wall;
+out_l = cav_l + 2 * wall; out_w = cav_w + 2 * wall;
+out_y1 = out_y0 + out_w;
+
+z_pcb_bot = floor_t + back_clear;
+z_pcb_top = z_pcb_bot + pcb_t;
+z_glass = z_pcb_top + stack;
+tub_h = z_glass;
+step = skirt_t + bezel_fit;
+
+z_usb = z_pcb_bot - 1.6;
+z_io = z_pcb_bot - 1.6;
+z_sd = z_pcb_bot - 1.0;
+
+// paperclip guide: hole through the floor, tube up to just under the switch
+clip_d = 1.6;                         // a standard paperclip is ~1 mm
+tube_d = 4.2;
+tube_top = z_pcb_bot - btn_h - 0.6;
+funnel_d = 4.0;                       // countersink on the outside
+
+pilot_top = z_glass + bezel_t - 0.8;
+// longest stock length that stays inside the pilot hole
+screw_len = max([for (l = [10, 12, 14, 16, 18, 20, 22, 25]) if (l <= pilot_top - floor_t) l]);
+echo(str("Screws: 4x M3 x ", screw_len, " mm pan head"));
+echo(str("Case: ", out_l, " x ", out_w, " x ", z_glass + bezel_t, " mm"));
+
+module rr2d(w, h, r) offset(r = r) offset(delta = -r) square([w, h]);
+module outer2d(inset = 0)
+    translate([out_x0 + inset, out_y0 + inset])
+        rr2d(out_l - 2 * inset, out_w - 2 * inset, max(0.5, pcb_r + fit + wall - inset));
+module cav2d() translate([cav_x0, cav_y0]) rr2d(cav_l, cav_w, pcb_r + fit);
+module win2d(grow = 0) {
+    m = window_margin + grow;
+    translate([va_x0 - m, va_y0 - m]) square([va_l + 2 * m, va_w + 2 * m]);
+}
+module rbox(w, h, r) translate([-w / 2, -h / 2]) rr2d(w, h, min(r, h / 2 - 0.01));
+// port through a wall: along x (left/right walls) or y (front/back walls)
+module port_x(cy, cz, w, h, x0, x1, r = 1)
+    translate([x0, cy, cz]) rotate([0, 90, 0]) rotate([0, 0, 90]) linear_extrude(x1 - x0) rbox(w, h, r);
+module port_y(cx, cz, w, h, y0, y1, r = 1)
+    translate([cx, y1, cz]) rotate([90, 0, 0]) linear_extrude(y1 - y0) rbox(w, h, r);
+
+// ---------------- back ----------------
+module back() {
+    difference() {
+        union() {
+            difference() {
+                union() {
+                    linear_extrude(tub_h - skirt_h) outer2d();
+                    linear_extrude(tub_h) outer2d(step);
+                }
+                translate([0, 0, floor_t]) linear_extrude(tub_h) cav2d();
+            }
+            for (h = holes) translate([h[0], h[1], floor_t - eps])
+                cylinder(d = 6.5, h = z_pcb_bot - floor_t + eps);
+            for (b = btns) translate([b[0], b[1], floor_t - eps])
+                cylinder(d = tube_d, h = tube_top - floor_t + eps);
+            if (speaker) speaker_frame();
+        }
+
+        for (h = holes) translate([h[0], h[1], -1]) {
+            cylinder(d = 3.4, h = z_pcb_bot + 2);
+            cylinder(d = 6.2, h = 1 + floor_t);
+        }
+
+        for (b = btns) translate([b[0], b[1], 0]) {
+            translate([0, 0, -1]) cylinder(d = clip_d, h = tube_top + 2, $fn = 20);
+            translate([0, 0, -eps]) cylinder(d1 = funnel_d, d2 = clip_d, h = (funnel_d - clip_d) / 2);
+        }
+        // labels next to the paperclip holes
+        for (i = [0, 1]) translate([btns[i][0] + 6.5, btns[i][1], -eps])
+            linear_extrude(0.5) mirror([1, 0]) rotate(90)
+                text(["RST", "BOOT"][i], size = 2.6, halign = "center", valign = "center",
+                     font = "Liberation Sans:style=Bold");
+
+        // USB-C on the left end, with a shallow recess for the overmold
+        port_x(usb_y, z_usb, 9.6, 3.8, out_x0 - 1, 0, 1.6);
+        port_x(usb_y, z_usb - 0.2, 12.8, 6.8, out_x0 - 1, out_x0 + 1.2, 2.5);
+
+        if (io_ports) {
+            for (x = [i2c_x, io_x]) port_y(x, z_io, 8.0, 4.5, out_y0 - 1, cav_y0 + 1);
+            port_y(uart_x, z_io, 8.0, 4.5, cav_y1 - 1, out_y1 + 1);
+        }
+
+        if (sd_slot) {
+            translate([sd_x - 6.5, cav_y1 - 1, z_sd - 1.5]) cube([13, wall + 2, 3]);
+            translate([sd_x, out_y1 + 3.4, z_sd]) scale([1.8, 1, 0.8]) sphere(r = 4.6);
+        }
+
+        if (speaker) grille();
+    }
+}
+
+module speaker_frame() {
+    c = 0.4; r = 1.2; h = 2.5;
+    translate([spk_center[0], spk_center[1], floor_t - eps])
+        linear_extrude(h) difference() {
+            offset(r = r) square([spk_l + 2 * c, spk_w + 2 * c], center = true);
+            square([spk_l + 2 * c, spk_w + 2 * c], center = true);
+            square([6, spk_w + 10], center = true);
+            square([spk_l + 10, 6], center = true);
+        }
+}
+
+module grille() {
+    p = 2.6; d = 1.6;
+    gx = spk_l - 8; gy = spk_w - 7;
+    for (i = [0 : floor(gx / p)], j = [0 : floor(gy / (p * 0.866))]) {
+        x = -gx / 2 + i * p + (j % 2) * p / 2;
+        y = -gy / 2 + j * p * 0.866;
+        if (abs(x) <= gx / 2)
+            translate([spk_center[0] + x, spk_center[1] + y, -1]) cylinder(d = d, h = floor_t + 2, $fn = 16);
+    }
+}
+
+// ---------------- bezel ----------------
+module bezel() {
+    difference() {
+        union() {
+            translate([0, 0, z_glass]) linear_extrude(bezel_t) outer2d();
+            translate([0, 0, z_glass - skirt_h]) linear_extrude(skirt_h + eps)
+                difference() { outer2d(); outer2d(skirt_t); }
+            // bosses clamp the PCB ends, outside the glass
+            for (h = holes) translate([h[0], h[1], z_pcb_top + 0.1])
+                cylinder(d = 5.6, h = z_glass - z_pcb_top);
+        }
+        hull() {
+            translate([0, 0, z_glass - eps]) linear_extrude(eps) win2d(0);
+            translate([0, 0, z_glass + bezel_t]) linear_extrude(eps * 2) win2d(bezel_t * 0.8);
+        }
+        // pilot holes for M3 thread-forming screws
+        for (h = holes) translate([h[0], h[1], z_pcb_top]) cylinder(d = 2.6, h = pilot_top - z_pcb_top);
+        if (mic_hole) translate([mic[0], mic[1], z_glass - 1]) cylinder(d = 1.6, h = bezel_t + 2);
+    }
+}
+
+// ---------------- mock board for the assembly view ----------------
+module board() {
+    color("#1a1a1a") translate([0, 0, z_pcb_bot]) linear_extrude(pcb_t) difference() {
+        rr2d(pcb_l, pcb_w, pcb_r);
+        for (h = holes) translate(h) circle(d = hole_d);
+    }
+    color("#222") translate([glass_x0, 0, z_pcb_top]) cube([glass_l, pcb_w, stack]);
+    color("#3a6ea5") translate([0, 0, z_glass]) linear_extrude(0.05) win2d(-window_margin);
+    color("silver") port_x(usb_y, z_usb, 8.9, 3.2, -0.3, 7);
+    if (speaker) color("#666") translate([spk_center[0] - spk_l / 2, spk_center[1] - spk_w / 2, floor_t])
+        cube([spk_l, spk_w, spk_d]);
+}
+
+module bezel_print() translate([0, 0, z_glass + bezel_t]) rotate([180, 0, 0]) bezel();
+
+if (part == "back") back();
+else if (part == "bezel") bezel_print();
+else if (part == "print") {        // tub + lid as two separate pieces
+    back();
+    translate([0, 2 * out_y1 + 8, 0]) bezel_print();
+}
+else {
+    color("#e8e2d0") back();
+    board();
+    color("#c9b98f") translate([0, 0, 10]) bezel();
+}
