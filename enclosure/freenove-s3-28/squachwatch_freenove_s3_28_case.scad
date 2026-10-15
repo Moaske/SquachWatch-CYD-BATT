@@ -53,14 +53,18 @@ speaker = true;     // pocket + grille
 /* [Lettering] */
 logo = "SQUACHWATCH";   // engraved on the back; "" for none
 logo_size = 4.6;
-logo_len = 34;          // engraving length
-logo_center = [66, 25]; // beside the speaker grille, over the battery space
+logo_len = 36;          // engraving length
+logo_center = [61, 25]; // beside the speaker grille, over the battery space
 
 /* [Speaker] */
 spk_l = 38;
 spk_w = 27;
 spk_d = 10;
-spk_center = [28, 25];   // clear of the RESET/BOOT guide tubes
+spk_across = true;       // long side across the case, leaving more battery room
+spk_center = [23, 25];   // clear of the RESET/BOOT guide tubes and the posts
+// speaker footprint along the case's x (length) and y (width)
+spk_x = spk_across ? spk_w : spk_l;
+spk_y = spk_across ? spk_l : spk_w;
 
 /* [Hidden] */
 $fn = 48;
@@ -188,16 +192,16 @@ module speaker_frame() {
     c = 0.4; r = 1.2; h = 2.5;
     translate([spk_center[0], spk_center[1], floor_t - eps])
         linear_extrude(h) difference() {
-            offset(r = r) square([spk_l + 2 * c, spk_w + 2 * c], center = true);
-            square([spk_l + 2 * c, spk_w + 2 * c], center = true);
-            square([6, spk_w + 10], center = true);
-            square([spk_l + 10, 6], center = true);
+            offset(r = r) square([spk_x + 2 * c, spk_y + 2 * c], center = true);
+            square([spk_x + 2 * c, spk_y + 2 * c], center = true);
+            square([6, spk_y + 10], center = true);
+            square([spk_x + 10, 6], center = true);
         }
 }
 
 module grille() {
     p = 2.6; d = 1.6;
-    gx = spk_l - 8; gy = spk_w - 7;
+    gx = spk_x - 8; gy = spk_y - 7;
     for (i = [0 : floor(gx / p)], j = [0 : floor(gy / (p * 0.866))]) {
         x = -gx / 2 + i * p + (j % 2) * p / 2;
         y = -gy / 2 + j * p * 0.866;
@@ -256,8 +260,8 @@ module board() {
     color("#222") translate([glass_x0, 0, z_pcb_top]) cube([glass_l, pcb_w, stack]);
     color("#3a6ea5") translate([0, 0, z_glass]) linear_extrude(0.05) win2d(-window_margin);
     color("silver") port_x(usb_y, z_usb, 8.9, 3.2, -0.3, 7);
-    if (speaker) color("#666") translate([spk_center[0] - spk_l / 2, spk_center[1] - spk_w / 2, floor_t])
-        cube([spk_l, spk_w, spk_d]);
+    if (speaker) color("#666") translate([spk_center[0] - spk_x / 2, spk_center[1] - spk_y / 2, floor_t])
+        cube([spk_x, spk_y, spk_d]);
 }
 
 module bezel_print() translate([0, 0, z_glass + bezel_t]) rotate([180, 0, 0]) bezel();
