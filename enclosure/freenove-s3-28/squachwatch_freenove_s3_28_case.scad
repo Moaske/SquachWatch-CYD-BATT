@@ -57,7 +57,7 @@ logo_len = 36;          // engraving length
 logo_center = [61, 25]; // beside the speaker grille, over the battery space
 
 /* [Speaker] */
-spk_l = 38;
+spk_l = 39;   // measured: 1 mm over the listed 38 for a snug fit
 spk_w = 27;
 spk_d = 10;
 spk_across = true;       // long side across the case, leaving more battery room

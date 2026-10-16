@@ -31,7 +31,7 @@ The dimensions come from the board's outline drawing, figure 5.1 in
 - **SQUACHWATCH** is engraved on the back beside the speaker grille (`logo`; set it to `""` to leave it off).
 - **Openings:** USB-C on the left end; I2C and IO on the bottom edge; UART and the TF slot (with a finger scoop) on the top edge.
 - **Mic:** a hole in the lid over the front-facing mic.
-- **Speaker:** a pocket and grille for the 38 × 27 × 10 mm Freenove speaker, turned across the case at the USB-C end so the rest of the floor stays free (`spk_across`). Change `spk_l`, `spk_w`, `spk_d` and `spk_center` if yours is different. The speaker plugs into the PH1.25 SPEAKER header.
+- **Speaker:** a pocket and grille for the 39 × 27 × 10 mm Freenove speaker, turned across the case at the USB-C end so the rest of the floor stays free (`spk_across`). Change `spk_l`, `spk_w`, `spk_d` and `spk_center` if yours is different. The speaker plugs into the PH1.25 SPEAKER header.
 - **Battery:** room beside the speaker for a LiPo of about 40 × 45 × 10 mm. It plugs into the MX1.25 BAT header; check the polarity against Freenove's diagram.
 
 ## Before printing
