@@ -47,6 +47,7 @@ window_margin = 0.25; // beyond the visible window, each side
 /* [Openings] */
 io_ports = true;    // I2C, IO and UART connectors
 sd_slot = true;
+sd_slot_w = 19;     // TF slot opening width (the card is 11)
 mic_hole = true;
 speaker = true;     // pocket + grille
 
@@ -173,8 +174,11 @@ module back() {
         }
 
         if (sd_slot) {
-            translate([sd_x - 6.5, cav_y1 - 1, z_sd - 1.5]) cube([13, wall + 2, 3]);
-            translate([sd_x, out_y1 + 3.4, z_sd]) scale([1.8, 1, 0.8]) sphere(r = 4.6);
+            // 19 mm, not 13: on the first print the card sat 2-3 mm off the
+            // slot's centre (2026-10-17), and the drawing's position is a
+            // scaled reading. 3 mm of slack each side, scoop to match.
+            translate([sd_x - sd_slot_w / 2, cav_y1 - 1, z_sd - 1.5]) cube([sd_slot_w, wall + 2, 3]);
+            translate([sd_x, out_y1 + 3.4, z_sd]) scale([2.4, 1, 0.8]) sphere(r = 4.6);
         }
 
         // name on the back, reading right way round with the case face-down
