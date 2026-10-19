@@ -178,7 +178,9 @@ module back() {
             // slot's centre (2026-10-17), and the drawing's position is a
             // scaled reading. 3 mm of slack each side, scoop to match.
             translate([sd_x - sd_slot_w / 2, cav_y1 - 1, z_sd - 1.5]) cube([sd_slot_w, wall + 2, 3]);
-            translate([sd_x, out_y1 + 3.4, z_sd]) scale([2.4, 1, 0.8]) sphere(r = 4.6);
+            // a shallow thumb recess around the slot, 1.7 deep, so a thumb
+            // reaches the card's edge (as on the Waveshare case, 2026-10-19)
+            translate([sd_x, out_y1 + 5 - 1.7, z_sd]) scale([2.4, 1, 1.1]) sphere(r = 5);
         }
 
         // name on the back, reading right way round with the case face-down
