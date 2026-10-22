@@ -799,7 +799,8 @@ static bool transmitOn(const Profile& prof, const uint8_t* f, uint16_t n, int8_t
 // text once three hours have passed -- the rhythm Meshtastic nodes use for
 // their own -- so it goes out only when the owner is already transmitting and
 // never on its own timer. A User message: id "!xxxxxxxx", long name, short
-// name (the first four characters), hardware PRIVATE_HW.
+// name (SQWT, or the first four characters of a changed name), hardware
+// PRIVATE_HW.
 static uint32_t s_nodeInfoAt = 0;
 static bool     s_nodeInfoSent = false;
 static const uint32_t NODEINFO_EVERY_MS = 3u * 3600u * 1000u;
@@ -811,8 +812,12 @@ static void announceIfDue(const Profile& prof, const char* name, int8_t dbm) {
     char idStr[12], shortName[5];
     snprintf(idStr, sizeof idStr, "!%08lx", (unsigned long)from);
     size_t ln = strlen(name); if (ln > 39) ln = 39;
+    // The short name: SQWT while he still goes by the default SQUACHY (the
+    // owner's pick, 2026-10-21 -- "SQUA" read as nothing), otherwise the first
+    // four characters of the name he was given.
     size_t sn = 0;
-    for (; sn < 4 && name[sn]; sn++) shortName[sn] = name[sn];
+    if (!strcmp(name, "SQUACHY")) { memcpy(shortName, "SQWT", 4); sn = 4; }
+    else for (; sn < 4 && name[sn]; sn++) shortName[sn] = name[sn];
     shortName[sn] = '\0';
     uint8_t user[80]; size_t u = 0;
     user[u++] = 0x0A; user[u++] = (uint8_t)strlen(idStr); memcpy(user + u, idStr, strlen(idStr)); u += strlen(idStr);
