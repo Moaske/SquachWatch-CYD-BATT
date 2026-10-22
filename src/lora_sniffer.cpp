@@ -779,37 +779,31 @@ static const char* presetChannel(const Profile& prof) {
     return strncmp(prof.name, "MT ", 3) == 0 ? prof.name + 3 : "LongFast";
 }
 
-// A default-channel Meshtastic frame from us: the 16-byte header in the clear,
-// Data{portnum, payload} under the published default key, on the preset's
-// primary channel `chan`. The node number is ours alone, from the MAC.
-// Returns the frame's length; `id` gets its packet id.
+// The preset's own channel as a Channel: its name, the published default
+// key, and the hash a stock node on that preset puts in every frame. Built
+// here rather than looked up, so a preset the decoder's name table does not
+// know still sends exactly what it always did.
+static Meshtastic::Channel presetChannelKey(const Profile& prof) {
+    Meshtastic::Channel c;
+    memset(&c, 0, sizeof c);
+    snprintf(c.name, sizeof c.name, "%s", presetChannel(prof));
+    Meshtastic::expandPsk(1, c.key);
+    c.keyLen = 16;
+    c.hash = Meshtastic::channelHash(c.name, c.key, 16);
+    c.enabled = true;
+    return c;
+}
+
+// A Meshtastic frame from us on channel `ch` (Meshtastic::buildFrame, the
+// host-tested half): the node number is ours alone, from the MAC, the packet
+// id random, the hops LORA SETTINGS' HOPS (1-7; 3 by default, Meshtastic's
+// own). Returns the frame's length, 0 for a channel that cannot be sealed;
+// `id` gets its packet id.
 static uint16_t meshtasticFrame(uint8_t port, const uint8_t* payload, size_t plen, uint8_t* f, uint32_t& id,
-                                const char* chan) {
-    if (plen > 200) plen = 200;
+                                const Meshtastic::Channel& ch) {
     const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
     id = esp_random();
-    LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
-    LoraCrypto::wr32le(f + 4, from);
-    LoraCrypto::wr32le(f + 8, id);
-    // Hop limit and hop start, both HOPS from LORA SETTINGS (1-7; 3 by
-    // default, Meshtastic's own).
-    uint8_t hops = Settings::loraHops();
-    if (hops < 1 || hops > 7) hops = 3;
-    f[12] = (uint8_t)(hops | (hops << 5));
-    uint8_t key[16];
-    Meshtastic::expandPsk(1, key);
-    f[13] = Meshtastic::channelHash(chan && *chan ? chan : "LongFast", key, 16);
-    f[14] = 0; f[15] = (uint8_t)from;
-    uint8_t* q = f + 16;
-    *q++ = 0x08; *q++ = port; *q++ = 0x12;
-    if (plen < 128) *q++ = (uint8_t)plen;
-    else { *q++ = (uint8_t)((plen & 0x7F) | 0x80); *q++ = (uint8_t)(plen >> 7); }
-    memcpy(q, payload, plen);
-    const uint8_t dlen = (uint8_t)((q - (f + 16)) + plen);
-    Meshtastic::Header h; Meshtastic::parseHeader(f, (uint8_t)(16 + dlen), h);
-    Meshtastic::Channel c; memset(&c, 0, sizeof c); memcpy(c.key, key, 16); c.keyLen = 16;
-    Meshtastic::decrypt(h, c, f + 16, dlen);   // CTR: encrypting is the same operation
-    return (uint16_t)(16 + dlen);
+    return Meshtastic::buildFrame(ch, from, id, Settings::loraHops(), port, payload, plen, f);
 }
 
 // The sniffer parked, the preset applied, the frame out, and back to whatever
@@ -862,7 +856,8 @@ static void announceIfDue(const Profile& prof, const char* name, int8_t dbm) {
     user[u++] = 0x1A; user[u++] = (uint8_t)sn;          memcpy(user + u, shortName, sn);         u += sn;
     user[u++] = 0x28; user[u++] = 0xFF; user[u++] = 0x01;   // hw_model 255, PRIVATE_HW
     uint8_t f[256]; uint32_t id = 0;
-    const uint16_t n = meshtasticFrame((uint8_t)Meshtastic::PORT_NODEINFO, user, u, f, id, presetChannel(prof));
+    // On the preset's own channel, whatever the chip says: see sendText.
+    const uint16_t n = meshtasticFrame((uint8_t)Meshtastic::PORT_NODEINFO, user, u, f, id, presetChannelKey(prof));
     const bool ok = transmitOn(prof, f, n, dbm);
     Serial.printf("[lora] announced \"%s\" (%s) to Meshtastic: %s\n", name, shortName, ok ? "ok" : "FAILED");
     if (ok) { s_nodeInfoSent = true; s_nodeInfoAt = now; }
@@ -870,60 +865,59 @@ static void announceIfDue(const Profile& prof, const char* name, int8_t dbm) {
     vTaskDelay(pdMS_TO_TICKS(400));
 }
 
-bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
+bool sendText(Proto p, const char* name, const char* text, int8_t dbm, int16_t chan) {
     if (!s_present || !text || !*text || !name) return false;
+    if (p != Proto::MESHCORE && p != Proto::MESHTASTIC) return false;
     uint8_t idx = 0;
     if (!meshProfile(p, idx)) return false;
     const Profile& prof = profile(idx);
     if (prof.group == PG_MESH_EU && dbm > 14) dbm = 14;      // ETSI's 25 mW
+    // Which channel: the default when none is named, else exactly the one
+    // named -- or nothing at all (see the header).
+    const char* primary = presetChannel(prof);
+    const uint8_t def = Chan::txDefault(p, primary);
+    if (chan > 255 || (chan >= 0 && !Chan::txSendable(p, (uint8_t)chan, primary))) {
+        Serial.printf("[lora] send refused: channel %d is not one this board can send on\n", (int)chan);
+        return false;
+    }
+    const uint8_t ci = chan < 0 ? def : (uint8_t)chan;
     uint8_t f[256];
     uint16_t n = 0;
     uint32_t key = 0;     // the identity a relay's copy of this will carry; see Msgs::note
+    char chName[24];
     if (p == Proto::MESHCORE) {
-        // A Public-channel text, sealed the way lora_meshcore_test seals one:
-        // timestamp, a flags byte, "name: text", zero-padded, AES-128-ECB, then
-        // two bytes of HMAC-SHA256 over the ciphertext.
-        const MeshCore::Channel ch = MeshCore::channel(0);
-        uint8_t plain[192] = {0};
+        // MeshCore::sealGroupText, the host-tested half: timestamp, a flags
+        // byte, "name: text", zero-padded, AES-128-ECB under the channel's
+        // key, two bytes of HMAC-SHA256 over the ciphertext, its hash in f[2].
+        const MeshCore::Channel ch = MeshCore::channel(ci);
+        snprintf(chName, sizeof chName, "%s", ch.name);
         const uint32_t stamp = Clock::trusted() ? Clock::nowEpoch() : 1790000000u;
-        LoraCrypto::wr32le(plain, stamp);
-        plain[4] = 0x00;
-        int tl = snprintf((char*)plain + 5, sizeof plain - 5, "%s: %s", name, text);
-        if (tl < 0) return false;
-        if (tl > (int)sizeof plain - 6) tl = (int)sizeof plain - 6;
-        const uint16_t plen = (uint16_t)(5 + tl);
-        const uint16_t clen = (uint16_t)((plen + 15) & ~15);
-        f[0] = 0x15;          // flood, GRP_TXT
-        f[1] = 0x00;          // no path yet
-        f[2] = ch.hash;       // Public
-        LoraCrypto::Aes128 aes; aes.setKey(ch.key);
-        for (uint16_t off = 0; off < clen; off = (uint16_t)(off + 16)) aes.encryptBlock(plain + off, f + 5 + off);
-        uint8_t secret[32] = {0}; memcpy(secret, ch.key, 16);
-        uint8_t mac[32];
-        LoraCrypto::hmacSha256(secret, 32, f + 5, clen, mac);
-        f[3] = mac[0]; f[4] = mac[1];
-        n = (uint16_t)(5 + clen);
-        // What a relay's copy decodes to: the name, the text as it fitted, the stamp.
         MeshCore::GroupText g;
-        if (MeshCore::parseGroupText(plain, (uint8_t)plen, g)) key = Lora::Msgs::meshCoreKey(g.sender, g.text, g.timestamp);
-    } else if (p == Proto::MESHTASTIC) {
-        // A default-channel text, built the way lora_meshtastic_test builds one.
+        n = MeshCore::sealGroupText(ch, stamp, name, text, f, &g);
+        if (!n) return false;
+        // What a relay's copy decodes to: the name, the text as it fitted, the stamp.
+        key = Lora::Msgs::meshCoreKey(g.sender, g.text, g.timestamp);
+    } else {
+        // The preset's own channel is built from the preset, exactly as
+        // before the chip; any other is the decoder's own row: key and hash.
+        const Meshtastic::Channel ch = ci == def ? presetChannelKey(prof) : Meshtastic::channel(ci);
+        snprintf(chName, sizeof chName, "%s", ch.name);
         uint32_t id = 0;
-        n = meshtasticFrame((uint8_t)Meshtastic::PORT_TEXT, (const uint8_t*)text, strlen(text), f, id, presetChannel(prof));
+        n = meshtasticFrame((uint8_t)Meshtastic::PORT_TEXT, (const uint8_t*)text, strlen(text), f, id, ch);
+        if (!n) return false;
         key = Lora::Msgs::meshtasticKey(0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF), id);
         announceIfDue(prof, name, dbm);
-    } else return false;
+    }
     const bool ok = transmitOn(prof, f, n, dbm);
-    Serial.printf("[lora] sent \"%s\" on %s at %d dBm: %s\n", text, prof.name, (int)dbm, ok ? "ok" : "FAILED");
+    Serial.printf("[lora] sent \"%s\" on %s, channel %s, at %d dBm: %s\n", text, prof.name, chName, (int)dbm, ok ? "ok" : "FAILED");
     if (ok) {
-        // Our own copy in the ring, so the chat shows what went out.
+        // Our own copy in the ring, so the chat shows what went out, filed
+        // under the channel it went on -- the chip's pick, or the default
+        // (LongFast's is channel 0, a MediumFast send's is MediumFast's row)
+        // -- so it sits beside the replies with the right name on it.
         Packet pk; memset(&pk, 0, sizeof pk);
         pk.proto = p; pk.profile = idx; pk.ms = millis();
-        // On the preset's primary channel: LongFast's is channel 0, a
-        // MediumFast send's is MediumFast's row, so it files beside replies.
-        int chan = p == Proto::MESHTASTIC ? Meshtastic::findChannel(presetChannel(prof)) : 0;
-        if (chan < 0) chan = 0;
-        Msgs::note(p, (uint8_t)chan, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
+        Msgs::note(p, ci, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
                    "YOU", 0, text, pk, millis(), true, 0, key);
     }
     return ok;

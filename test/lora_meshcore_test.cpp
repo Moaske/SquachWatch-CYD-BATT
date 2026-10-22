@@ -145,5 +145,55 @@ int main() {
         ck("two SNRs", d.trace.nSnr == 2 && d.trace.snr4[0] == 26 && d.trace.snr4[1] == -10);
     }
 
+    // The channel chip's send path: sealGroupText() is what Lora::sendText
+    // puts on the air, and decode() is what a receiver holding the same
+    // channel makes of it.
+    suite("A group text we seal on a hashtag channel opens on that channel");
+    {
+        clearUserChannels();
+        ck("#hiking added", addChannel("#hiking", nullptr));
+        const uint8_t hi = (uint8_t)findChannel("#hiking");
+        const Channel h = channel(hi);
+        uint8_t k[16]; hashtagKey("#hiking", k);
+        ck("its key is SHA256(\"#hiking\")", memcmp(h.key, k, 16) == 0 && h.derived);
+        uint8_t f[256];
+        GroupText echo;
+        const uint16_t n = sealGroupText(h, 1790000123u, "SQUACHY", "trailhead at noon", f, &echo);
+        ck("a frame came out", n > 5 && ((n - 5) % 16) == 0);
+        ck("flood GRP_TXT, no path", f[0] == 0x15 && f[1] == 0x00);
+        ck("its hash byte is the channel's", f[2] == h.hash && f[2] == channelHash(k));
+        ck("and not Public's", f[2] != 0x11 || h.hash == 0x11);
+        ck("the echo is what a relay's copy reads", !strcmp(echo.sender, "SQUACHY") && !strcmp(echo.text, "trailhead at noon") && echo.timestamp == 1790000123u);
+        memset(&pk, 0, sizeof pk);
+        pk.flags = Lora::PK_CRC_PRESENT | Lora::PK_CRC_OK;
+        memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        Decoded d;
+        ck("decodes", decode(pk, d) && d.haveGroup);
+        ck("on that channel", d.haveChannel && d.channelIdx == hi);
+        ck("sender and text", !strcmp(d.grp.sender, "SQUACHY") && !strcmp(d.grp.text, "trailhead at noon"));
+        ck("the stamp", d.grp.timestamp == 1790000123u);
+        // A board without #hiking cannot read it.
+        clearUserChannels();
+        ck("without the channel it stays shut", decode(pk, d) && !d.haveGroup);
+    }
+
+    suite("A keyed channel, and Public");
+    {
+        clearUserChannels();
+        ck("a keyed channel added", addChannel("RidgeCrew", "3c910e5d77a2481fb62be0946cd3058e"));
+        const uint8_t ri = (uint8_t)findChannel("RidgeCrew");
+        uint8_t f[256];
+        uint16_t n = sealGroupText(channel(ri), 1790000200u, "SQUACHY", "radio check", f);
+        memset(&pk, 0, sizeof pk); memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        Decoded d;
+        ck("opens on it", decode(pk, d) && d.haveGroup && d.channelIdx == ri && f[2] == channel(ri).hash);
+        n = sealGroupText(channel(0), 1790000201u, "SQUACHY", "hi all", f);
+        memset(&pk, 0, sizeof pk); memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        ck("Public: hash 0x11, opens on channel 0", f[2] == 0x11 && decode(pk, d) && d.haveGroup && d.channelIdx == 0 && !strcmp(d.grp.text, "hi all"));
+        setChannelEnabled(ri, false);
+        ck("a muted channel seals nothing", sealGroupText(channel(ri), 1, "a", "b", f) == 0);
+        clearUserChannels();
+    }
+
     return report();
 }

@@ -186,6 +186,34 @@ void decrypt(const Header& h, const Channel& c, uint8_t* payload, uint8_t len) {
     ctr(k, nonce, payload, len);
 }
 
+bool canSend(const Channel& c) {
+    return c.enabled && c.name[0] && (c.keyLen == 16 || c.keyLen == 0);
+}
+
+uint16_t buildFrame(const Channel& c, uint32_t from, uint32_t id, uint8_t hops, uint8_t port,
+                    const uint8_t* payload, size_t plen, uint8_t* f) {
+    if (!f || !canSend(c)) return 0;
+    if (!payload) plen = 0;
+    if (plen > 200) plen = 200;
+    if (hops < 1 || hops > 7) hops = 3;
+    wr32le(f, BROADCAST);
+    wr32le(f + 4, from);
+    wr32le(f + 8, id);
+    f[12] = (uint8_t)(hops | (hops << 5));
+    f[13] = c.hash;
+    f[14] = 0; f[15] = (uint8_t)from;
+    uint8_t* q = f + 16;
+    *q++ = 0x08; *q++ = port; *q++ = 0x12;
+    if (plen < 128) *q++ = (uint8_t)plen;
+    else { *q++ = (uint8_t)((plen & 0x7F) | 0x80); *q++ = (uint8_t)(plen >> 7); }
+    if (plen) memcpy(q, payload, plen);
+    const uint8_t dlen = (uint8_t)((q - (f + 16)) + plen);
+    Header h;
+    parseHeader(f, (uint8_t)(16 + dlen), h);
+    decrypt(h, c, f + 16, dlen);   // CTR: sealing is the same operation; no key = in the clear
+    return (uint16_t)(16 + dlen);
+}
+
 bool parseData(const uint8_t* p, uint8_t len, Data& out) {
     memset(&out, 0, sizeof out);
     Pb::Reader r(p, len);

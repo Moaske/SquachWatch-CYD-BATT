@@ -15,6 +15,7 @@
 #include "lora_radio.h"
 #include "lora_meshtastic.h"
 #include "lora_meshcore.h"
+#include "lora_channels.h"
 #include "settings.h"
 #include "theme.h"
 #include "privacy.h"
@@ -49,6 +50,11 @@ char     s_status[40] = { 0 };
 uint32_t s_statusAt = 0;
 // Where the chat columns' tap zones are, for uiLoraHomeHit.
 int      s_switchX = 240, s_switchW = 76;
+// The channel chip, at the compose line's right end: where it was drawn.
+int      s_chipX = 180, s_chipW = 56;
+// The chip's longest name in characters; a longer one is cut and ends "..".
+// Ten keeps two-thirds of the line for typing with the widest chip.
+const size_t CHIP_CHARS = 10;
 
 uint16_t dim(uint16_t col, uint16_t t) { return Theme::blend(Theme::BG, col, t); }
 uint16_t netCol(Lora::Proto p) { return p == Lora::Proto::MESHCORE ? Theme::PINK : Theme::CYAN; }
@@ -66,6 +72,15 @@ void small(TFT_eSPI& t, int x, int y, const char* s, uint16_t col, uint16_t bg =
     t.setTextFont(1); t.setTextSize(1);
     t.setTextColor(col, bg);
     t.setCursor(x, y); t.print(s);
+}
+// The same on a background of one's own (the compose line's).
+void smallClipBg(TFT_eSPI& t, int x, int y, const char* s, uint16_t col, uint16_t bg, int maxW) {
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s", s);
+    t.setTextFont(1); t.setTextSize(1);
+    size_t n = strlen(buf);
+    while (n && t.textWidth(buf) > maxW) buf[--n] = '\0';
+    small(t, x, y, buf, col, bg);
 }
 void smallClip(TFT_eSPI& t, int x, int y, const char* s, uint16_t col, int maxW) {
     char buf[64];
@@ -834,25 +849,52 @@ void drawChats(TFT_eSPI& t, uint32_t now) {
     }
 }
 
-// ---- the compose line and the bar -------------------------------------------------
+// ---- the compose line, its channel chip, and the bar -----------------------------
+Lora::Proto netProto() { return s_net ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC; }
+
+// The chip's words: the channel Enter sends on, cut to CHIP_CHARS.
+void chipLabel(char* out, size_t cap) {
+    const Lora::Proto p = netProto();
+    char name[24];
+    Lora::Chan::txName(p, Lora::Chan::txPick(p), name, sizeof name);
+    if (strlen(name) > CHIP_CHARS) { name[CHIP_CHARS - 2] = '.'; name[CHIP_CHARS - 1] = '.'; name[CHIP_CHARS] = '\0'; }
+    snprintf(out, cap, "%s", name);
+}
+
+// The compose line now ends where the chip begins: the chip's width is set
+// by its name, so the line is measured first and drawn second.
 void drawCompose(TFT_eSPI& t, uint32_t now) {
     const uint16_t accent = s_net ? Theme::PINK : Theme::CYAN;
-    const int w = 232;
-    t.fillRoundRect(4, COMPOSE_Y, w, COMPOSE_H, 2, dim(Theme::WHITE, 18));
-    t.drawRoundRect(4, COMPOSE_Y, w, COMPOSE_H, 2, dim(accent, 150));
+    char chip[24];
+    chipLabel(chip, sizeof chip);
     t.setTextFont(1); t.setTextSize(1);
+    s_chipW = t.textWidth(chip) + 8;
+    if (s_chipW < 28) s_chipW = 28;
+    s_chipX = 236 - s_chipW;                     // flush with the old line's right end
+    const int w = s_chipX - 2 - 4;               // the typing box, x 4 to the chip
+    const uint16_t bg = dim(Theme::WHITE, 18);
+    t.fillRoundRect(4, COMPOSE_Y, w, COMPOSE_H, 2, bg);
+    t.drawRoundRect(4, COMPOSE_Y, w, COMPOSE_H, 2, dim(accent, 150));
     if (s_status[0] && now - s_statusAt < 2500) {
-        small(t, 8, COMPOSE_Y + 2, s_status, Theme::VAPOR_YELLOW, dim(Theme::WHITE, 18));
+        smallClipBg(t, 8, COMPOSE_Y + 2, s_status, Theme::VAPOR_YELLOW, bg, w - 8);
     } else if (!Settings::loraTxDbm() && !s_composeN) {
-        small(t, 8, COMPOSE_Y + 2, "TYPE TO SEND (LORA TX IS OFF: SETTINGS)", dim(Theme::WHITE, 120), dim(Theme::WHITE, 18));
+        smallClipBg(t, 8, COMPOSE_Y + 2, "LORA TX IS OFF: SETTINGS", dim(Theme::WHITE, 120), bg, w - 8);
     } else if (!s_composeN) {
-        small(t, 8, COMPOSE_Y + 2, "TYPE TO SEND, ENTER SENDS", dim(accent, 170), dim(Theme::WHITE, 18));
+        smallClipBg(t, 8, COMPOSE_Y + 2, "TYPE TO SEND, ENTER SENDS", dim(accent, 170), bg, w - 8);
     } else {
         char line[168]; snprintf(line, sizeof line, "%s_", s_compose);
         const char* p = line;
         while (*p && t.textWidth(p) > w - 10) p++;
-        small(t, 8, COMPOSE_Y + 2, p, Theme::WHITE, dim(Theme::WHITE, 18));
+        small(t, 8, COMPOSE_Y + 2, p, Theme::WHITE, bg);
     }
+    // The chip: outlined on the network's default channel, filled in the
+    // network's colour on any other, so a text about to leave on a private
+    // channel (or not) is plain at a glance. A tap steps it.
+    const bool def = Lora::Chan::txIsDefault(netProto());
+    const uint16_t cbg = def ? dim(accent, 40) : accent;
+    t.fillRoundRect(s_chipX, COMPOSE_Y, s_chipW, COMPOSE_H, 2, cbg);
+    t.drawRoundRect(s_chipX, COMPOSE_Y, s_chipW, COMPOSE_H, 2, accent);
+    small(t, s_chipX + (s_chipW - t.textWidth(chip)) / 2, COMPOSE_Y + 2, chip, def ? accent : Theme::BG, cbg);
 }
 
 void drawBar(TFT_eSPI& t) {
@@ -892,6 +934,15 @@ void uiLoraHomeInit(TFT_eSPI& t) {
 }
 
 void uiLoraHomeToggleNet() { s_net = (uint8_t)(s_net ? 0 : 1); }
+void uiLoraHomeStepChannel(uint32_t now) {
+    const Lora::Proto p = netProto();
+    const uint8_t was = Lora::Chan::txPick(p);
+    if (Lora::Chan::txStep(p) == was) {
+        // Nothing else to step to: say where channels come from.
+        snprintf(s_status, sizeof s_status, "NO OTHER CHANNEL: SETTINGS");
+        s_statusAt = now;
+    }
+}
 void uiLoraHomeSetNet(uint8_t net) { s_net = net ? 1 : 0; }
 uint8_t uiLoraHomeNet() { return s_net; }
 
@@ -926,6 +977,9 @@ LoraHomeHit uiLoraHomeHit(TFT_eSPI& t, int x, int y) {
     if (y < 22 && x < 50) return LoraHomeHit::SETTINGS;
     // The switch, all of its double height and a little round it.
     if (y >= COMPOSE_Y - 2 && x >= s_switchX - 6) return LoraHomeHit::SWITCH;
+    // The channel chip, its own height and a little round it, up to where
+    // the switch's slack begins.
+    if (y >= COMPOSE_Y - 3 && y < COMPOSE_Y + COMPOSE_H + 2 && x >= s_chipX - 3) return LoraHomeHit::CHANNEL;
     if (y >= BAR_Y - 4) return x < 80 ? LoraHomeHit::CHATS : LoraHomeHit::NONE;
     if (y >= COMPOSE_Y - 2) return LoraHomeHit::NONE;
     if (y >= CHAT_Y - 2 && y < CHAT_Y + CHAT_TAB_H + 2) return x < 160 ? LoraHomeHit::TAB_MESHTASTIC : LoraHomeHit::TAB_MESHCORE;
@@ -937,9 +991,11 @@ void uiLoraHomeKey(char c, uint32_t now) {
     if (c == '\b') { if (s_composeN) s_compose[--s_composeN] = '\0'; return; }
     if (c == '\n') {
         if (!s_composeN) return;
-        if (!Settings::loraTxDbm()) { snprintf(s_status, sizeof s_status, "LORA TX IS OFF: SETTINGS > LORA"); s_statusAt = now; return; }
-        // LORA SETTINGS' NAME, else the squad nickname (include/lora_myname.h).
-        const bool ok = Lora::sendText(s_net ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC, uiLoraMyName(), s_compose, (int8_t)Settings::loraTxDbm());
+        if (!Settings::loraTxDbm()) { snprintf(s_status, sizeof s_status, "LORA TX IS OFF: SETTINGS"); s_statusAt = now; return; }
+        // LORA SETTINGS' NAME, else the squad nickname (include/lora_myname.h),
+        // on the channel the chip shows.
+        const Lora::Proto p = netProto();
+        const bool ok = Lora::sendText(p, uiLoraMyName(), s_compose, (int8_t)Settings::loraTxDbm(), (int16_t)Lora::Chan::txPick(p));
         snprintf(s_status, sizeof s_status, ok ? "SENT" : "SEND FAILED");
         s_statusAt = now;
         if (ok) { s_composeN = 0; s_compose[0] = '\0'; }

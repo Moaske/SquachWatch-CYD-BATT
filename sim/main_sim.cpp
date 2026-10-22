@@ -79,6 +79,8 @@
 #include "touch_cal.h"
 #include "ui_lorahome.h"
 #include "ui_lorasettings.h"
+#include "ui_lorachat.h"
+#include "lora_channels.h"
 #include "lora_sim.h"           // the made-up band the LORA page reads
 
 // A few plausible log entries so screens have something real to draw --
@@ -289,6 +291,15 @@ static void gpsFeed(uint32_t nowMs) {
     for (const char* line : BURST) Gnss::sentence(line, nowMs);
 }
 
+// SQUACHSIM_LORACH: the channel chip's pick for network `net` (0 Meshtastic,
+// 1 MeshCore), set the way a tap leaves it -- by name in the settings store --
+// and both picks cleared first, because the NVS shim may remember a run.
+static void simLoraPick(uint8_t net) {
+    Settings::setLoraTxChan(false, "");
+    Settings::setLoraTxChan(true, "");
+    if (const char* ch = getenv("SQUACHSIM_LORACH")) Settings::setLoraTxChan(net != 0, ch);
+}
+
 static void usage() {
     fprintf(stderr,
         "usage: squachsim <screen> [out.png] [options]\n"
@@ -298,6 +309,10 @@ static void usage() {
         "                    SQUACHSIM_LORAQUIET=s: no packets for s seconds before the capture\n"
         "                    SQUACHSIM_LORATYPE=TEXT: typed from the capture, then Enter\n"
         "                    SQUACHSIM_LORATX=1: LORA TX on; SQUACHSIM_LORANEW=n: the NEW badge\n"
+        "                    SQUACHSIM_LORACH=name: the channel chip picks that channel of the\n"
+        "                    open tab's network (Yowie, #sasquatch, RidgeCrew); unset = default\n"
+        "  lorachat          the T-Deck's LORA CHATS with its compose line (--size 320x240);\n"
+        "                    --tab, SQUACHSIM_LORATYPE, SQUACHSIM_LORATX and SQUACHSIM_LORACH as lora\n"
         "  lorasettings      the T-Deck's LORA SETTINGS page (--size 320x240): --scroll n moves it n rows,\n"
         "                    --tap f:x:y taps it, SQUACHSIM_LORATYPE types into an open edit line\n"
         "                    ('|' is Enter), SQUACHSIM_LORAREST=1 says the radios are resting\n"
@@ -709,7 +724,7 @@ int main(int argc, char** argv) {
     // last 80 seconds of packets -- and all of it is millis(), which starts at
     // zero here. An hour after boot, unless pinned, so none of it is "before
     // the board was on".
-    else if (screen == "lora" || screen == "lorasettings") now = 3600000u;
+    else if (screen == "lora" || screen == "lorasettings" || screen == "lorachat") now = 3600000u;
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.
@@ -732,11 +747,12 @@ int main(int argc, char** argv) {
 
     // The LORA page's compose line, typed: one key every two frames from the
     // capture (SQUACHSIM_LORATYPE), then Enter.
-    const char* loraType = (screen == "lora" || screen == "lorasettings") ? getenv("SQUACHSIM_LORATYPE") : nullptr;
+    const char* loraType = (screen == "lora" || screen == "lorasettings" || screen == "lorachat") ? getenv("SQUACHSIM_LORATYPE") : nullptr;
     const bool loraRest = getenv("SQUACHSIM_LORAREST") != nullptr;
     // LORA SETTINGS types from frame 30 of the warm-up, after the --tap that
     // opens an edit line, so the capture shows the line typed.
-    const uint32_t loraTypeAt = now + (uint32_t)(screen == "lorasettings" ? 30 : frames) * STEP_MS;
+    // LORA CHATS from frame 10, so the capture shows forty keys of it typed.
+    const uint32_t loraTypeAt = now + (uint32_t)(screen == "lorasettings" ? 30 : screen == "lorachat" ? 10 : frames) * STEP_MS;
     size_t loraTyped = 0;
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
@@ -863,6 +879,15 @@ int main(int argc, char** argv) {
                     uiLoraHomeKey(loraTyped < len ? loraType[loraTyped] : '\n', t);
             }
             uiLoraHomeTick(frame, t);
+        }
+        else if (screen == "lorachat") {
+            SimLora::step(t);
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraChatKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraChatTick(frame, t);
         }
         else if (screen == "lorasettings") {
             SimLora::step(t);
@@ -1042,13 +1067,26 @@ int main(int argc, char** argv) {
         const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
         for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
         SimLora::begin(lc);
+        simLoraPick(lc.net);
         uiLoraHomeInit(frame);
         uiLoraHomeSetNet(lc.net);
+    }
+    else if (screen == "lorachat") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        lc.net       = tabIdx ? 1 : 0;
+        const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
+        for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
+        SimLora::begin(lc);
+        simLoraPick(lc.net);
+        uiLoraChatSelect(lc.net);
+        uiLoraChatInit(frame);
     }
     else if (screen == "lorasettings") {
         SimLora::Config lc;
         lc.captureAt = now + (uint32_t)frames * STEP_MS;
         SimLora::begin(lc);
+        simLoraPick(tabIdx ? 1 : 0);
         uiLoraSettingsInit(frame, true);
     }
     else if (screen == "wifiadd")    uiWifiAddInit(frame);

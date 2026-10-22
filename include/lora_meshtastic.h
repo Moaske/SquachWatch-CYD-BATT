@@ -82,6 +82,22 @@ uint32_t       channelLastMs(uint8_t i);    // millis() of the last one; 0 = nev
 // check, as it is in the firmware.
 void decrypt(const Header& h, const Channel& c, uint8_t* payload, uint8_t len);
 
+// ---- sending ------------------------------------------------------------------
+// Whether a frame can be built for this channel: switched on, and a key this
+// file can seal with -- 16 bytes, or none at all (ham mode, in the clear). A
+// 32-byte key is refused here for the reason decrypt() cannot open one: there
+// is no AES-256 in lora_crypto, and a frame sealed wrong is worse than none.
+bool canSend(const Channel& c);
+// One broadcast frame from `from`, the way a stock node builds it: the 16-byte
+// header in the clear (to all, from, id, hop limit = hop start = `hops`, the
+// channel's hash, next hop 0, relay = our last byte), then Data{portnum,
+// payload} under the channel's key with the same nonce decrypt() uses -- CTR,
+// so sealing is that same operation. `f` needs room for 16 + 4 + 200 bytes;
+// the payload is cut at 200. Returns the length, 0 when !canSend(c).
+// Pure, so test/lora_meshtastic_test.cpp builds one and opens it with decode().
+uint16_t buildFrame(const Channel& c, uint32_t from, uint32_t id, uint8_t hops, uint8_t port,
+                    const uint8_t* payload, size_t plen, uint8_t* f);
+
 struct Data {
     uint32_t       portnum;
     const uint8_t* payload;

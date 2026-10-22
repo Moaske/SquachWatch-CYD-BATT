@@ -9008,6 +9008,7 @@ void loop() {
                     const LoraChatHit hit = uiLoraChatHit(*canvas, gestureStartX, gestureStartY);
                     if (hit == LoraChatHit::TAB_MESHTASTIC) uiLoraChatSelect(0);
                     else if (hit == LoraChatHit::TAB_MESHCORE) uiLoraChatSelect(1);
+                    else if (hit == LoraChatHit::CHANNEL) uiLoraChatStepChannel(now);
                 }
             }
             break;
@@ -9033,6 +9034,7 @@ void loop() {
                         case LoraHomeHit::TAB_MESHTASTIC:  uiLoraHomeSetNet(0); break;
                         case LoraHomeHit::TAB_MESHCORE:    uiLoraHomeSetNet(1); break;
                         case LoraHomeHit::SETTINGS:        enterLoraSettings(true); break;
+                        case LoraHomeHit::CHANNEL:         uiLoraHomeStepChannel(now); break;
                         default: break;
                     }
                 }

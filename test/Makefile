@@ -102,7 +102,7 @@ lora_ham_test_SRCS           := $(SRC)/lora_aprs.cpp $(SRC)/lora_fanet.cpp $(SRC
 # The channel list across a reboot, through the settings store and the
 # Preferences shim's real file. Theme and Clock are stubbed in the test, the
 # way hunt_test does it -- settings.cpp only calls a handful of each.
-lora_channels_test_SRCS      := $(SRC)/lora_channels.cpp $(SRC)/lora_meshcore.cpp $(SRC)/lora_meshtastic.cpp $(SRC)/lora_crypto.cpp $(SRC)/settings.cpp $(SRC)/lora_myname.cpp
+lora_channels_test_SRCS      := $(SRC)/lora_channels.cpp $(SRC)/lora_meshcore.cpp $(SRC)/lora_meshtastic.cpp $(SRC)/lora_crypto.cpp $(SRC)/settings.cpp $(SRC)/lora_myname.cpp $(SRC)/lora_profiles.cpp $(SRC)/lora_pkt.cpp
 # Time on air and the duty ceilings: the profile table's numbers, against the
 # reference values in docs/LORA.md.
 lora_airtime_test_SRCS       := $(SRC)/lora_pkt.cpp $(SRC)/lora_profiles.cpp $(SRC)/lora_crypto.cpp

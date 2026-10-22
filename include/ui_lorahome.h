@@ -22,13 +22,19 @@
 #include <stdint.h>
 
 enum class LoraHomeHit : uint8_t { NONE = 0, CHAT_MESHTASTIC, CHAT_MESHCORE, SWITCH, CHATS, BACK,
-                                   TAB_MESHTASTIC, TAB_MESHCORE, SETTINGS };
+                                   TAB_MESHTASTIC, TAB_MESHCORE, SETTINGS, CHANNEL };
 
 void        uiLoraHomeInit(TFT_eSPI& t);
 void        uiLoraHomeTick(TFT_eSPI& t, uint32_t now);
 LoraHomeHit uiLoraHomeHit(TFT_eSPI& t, int x, int y);
 // The switch: which network the compose line sends to. 0 Meshtastic, 1 MeshCore.
 void        uiLoraHomeToggleNet();
+// The channel chip at the compose line's right end: which channel of the
+// switch's network Enter sends on. A tap steps it to the next one that can be
+// sent on, round and back to the default (Lora::Chan::txStep, which stores
+// it). No key does this: every printable key types, and Enter and DEL are
+// taken.
+void        uiLoraHomeStepChannel(uint32_t now);
 // The chat window's tabs and the switch are one setting: 0 Meshtastic, 1 MeshCore.
 void        uiLoraHomeSetNet(uint8_t net);
 uint8_t     uiLoraHomeNet();

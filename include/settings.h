@@ -406,6 +406,17 @@ namespace Settings {
     // Key "loraMtPre".
     const char* loraMtPreset();
     void        setLoraMtPreset(const char* name);
+    // The CHANNEL CHIP on the T-Deck's compose lines: which channel each
+    // network's texts go out on, by NAME ("#hiking", "RidgeCrew"), never by
+    // index -- an index shifts when a channel above it is removed on the
+    // CHANNELS page, and a send that slid onto the neighbouring channel is the
+    // one mistake a picker must not make. "" is the default (Meshtastic: the
+    // preset's own channel; MeshCore: Public) and is the absence of the key.
+    // Lora::Chan::txPick (include/lora_channels.h) turns it into a channel and
+    // falls back to the default when the name is gone. Keys "loraTxChMt" and
+    // "loraTxChMc".
+    const char* loraTxChan(bool meshcore);
+    void        setLoraTxChan(bool meshcore, const char* name);
 
     // The channel keys the two mesh decoders hold, as one opaque blob. The
     // record format is Lora::Chan's business (include/lora_channels.h); this

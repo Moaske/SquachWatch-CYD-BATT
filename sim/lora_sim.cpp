@@ -25,6 +25,8 @@
 #include "lora_sim.h"
 #include "lora_sniffer.h"
 #include "lora_profiles.h"
+#include "lora_meshtastic.h"
+#include "lora_meshcore.h"
 #include "ui_lorachat.h"
 #include "gnss.h"
 #include <Arduino.h>
@@ -205,6 +207,15 @@ void begin(const Config& c) {
     s_cfg = c;
     s_sent.clear();
     Lora::setRegion(Lora::REGION_US);   // the T-Deck's band plan
+    // The made-up user channels below, in the decoders' real tables too, so
+    // the compose line's channel chip (Lora::Chan, the real code) has them
+    // to step through. The keys are the same made-up bytes as the list's.
+    MeshCore::clearUserChannels();
+    Meshtastic::clearUserChannels();
+    MeshCore::addChannel("#sasquatch", nullptr);
+    MeshCore::addChannel("#bigfoot-sightings", nullptr);
+    MeshCore::addChannel("RidgeCrew", "3c910e5d77a2481fb62be0946cd3058e");
+    Meshtastic::addChannel("Yowie", "6a1df239805ec7149b42e80d73af26b1");
     step(millis());
 }
 
@@ -280,10 +291,13 @@ bool msgAt(uint16_t idxFromNewest, Msgs::Msg& out) {
     return true;
 }
 
-bool sendText(Proto p, const char* name, const char* text, int8_t) {
+uint32_t msgDropped() { return 0; }
+
+bool sendText(Proto p, const char* name, const char* text, int8_t, int16_t chan) {
     if (!text || !*text) return false;
     Msgs::Msg m{};
     m.proto = p;
+    m.chan = chan < 0 ? 0 : (uint8_t)chan;
     m.ms = millis();
     m.rssi = 0;
     m.direct = true;
@@ -309,6 +323,7 @@ struct SimChan { Lora::Proto proto; char name[24]; bool builtIn, derived; uint32
 std::vector<SimChan> s_chans = {
     { Lora::Proto::MESHCORE,   "Public",     true,  false, 214, { 0x8b,0x33,0x87,0xe9,0xc5,0xcd,0xea,0x6a,0xc9,0xe5,0xed,0xba,0xa1,0x15,0xcd,0x72 }, 16 },
     { Lora::Proto::MESHCORE,   "#sasquatch", false, true,   37, { 0 }, 16 },
+    { Lora::Proto::MESHCORE,   "#bigfoot-sightings", false, true, 4, { 0 }, 16 },
     { Lora::Proto::MESHCORE,   "RidgeCrew",  false, false,   9, { 0x3c,0x91,0x0e,0x5d,0x77,0xa2,0x48,0x1f,0xb6,0x2b,0xe0,0x94,0x6c,0xd3,0x05,0x8e }, 16 },
     { Lora::Proto::MESHTASTIC, "LongFast",   true,  false, 512, { 0xd4,0xf1,0xbb,0x3a,0x20,0x29,0x07,0x59,0xf0,0xbc,0xff,0xab,0xcf,0x4e,0x69,0x01 }, 16 },
     { Lora::Proto::MESHTASTIC, "Yowie",      false, false,  21, { 0x6a,0x1d,0xf2,0x39,0x80,0x5e,0xc7,0x14,0x9b,0x42,0xe8,0x0d,0x73,0xaf,0x26,0xb1 }, 16 },
@@ -350,6 +365,17 @@ bool channelAdd(Proto p, const char* name, const char* key, char* msg, size_t ca
     if (msg && cap) snprintf(msg, cap, "ADDED AND STORED");
     return true;
 }
+// The row's channel in the decoders' real tables (begin() put them there),
+// for the CHANNELS page's SEND tag.
+bool channelRowKey(uint8_t row, Proto& proto, uint8_t& idx) {
+    if (row >= s_chans.size()) return false;
+    const SimChan& c = s_chans[row];
+    const int i = c.proto == Proto::MESHCORE ? MeshCore::findChannel(c.name) : Meshtastic::findChannel(c.name);
+    if (i < 0) return false;
+    proto = c.proto; idx = (uint8_t)i;
+    return true;
+}
+
 bool channelDropRow(uint8_t row) {
     if (row >= s_chans.size() || s_chans[row].builtIn) return false;
     s_chans.erase(s_chans.begin() + row);

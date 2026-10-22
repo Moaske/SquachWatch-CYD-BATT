@@ -218,6 +218,7 @@ static bool     s_loraAlerts   = true;
 static uint8_t  s_loraHops     = 3;
 static bool     s_loraMsgSnd   = true;
 static char     s_loraMtPre[16] = { 0 };   // "" = LongFast
+static char     s_loraTxCh[2][24] = { { 0 }, { 0 } };   // [0] Meshtastic, [1] MeshCore; "" = default
 
 // ---- status light --------------------------------------------------------
 static bool    s_lightOn     = true;
@@ -480,6 +481,16 @@ void setLoraMtPreset(const char* name) {
     else { s_loraMtPre[0] = '\0'; s_prefs.remove("loraMtPre"); }
 }
 
+// Keys 10 characters each, and neither begins "loraChans".
+const char* loraTxChan(bool meshcore) { return s_loraTxCh[meshcore ? 1 : 0]; }
+void setLoraTxChan(bool meshcore, const char* name) {
+    char* s = s_loraTxCh[meshcore ? 1 : 0];
+    snprintf(s, sizeof s_loraTxCh[0], "%s", name ? name : "");
+    const char* key = meshcore ? "loraTxChMc" : "loraTxChMt";
+    if (s[0]) s_prefs.putString(key, s);
+    else      s_prefs.remove(key);
+}
+
 // The channel list. Bytes in, bytes out: the store does not know or care what
 // a MeshCore hashtag is, which is why this pair takes a blob and the record
 // format lives with the decoders that write it.
@@ -684,6 +695,9 @@ void load() {
     s_loraMsgSnd   = s_prefs.getBool("loraMsgSnd", true);
     s_loraMtPre[0] = '\0';
     if (s_prefs.isKey("loraMtPre")) s_prefs.getString("loraMtPre", s_loraMtPre, sizeof s_loraMtPre);
+    s_loraTxCh[0][0] = s_loraTxCh[1][0] = '\0';
+    if (s_prefs.isKey("loraTxChMt")) s_prefs.getString("loraTxChMt", s_loraTxCh[0], sizeof s_loraTxCh[0]);
+    if (s_prefs.isKey("loraTxChMc")) s_prefs.getString("loraTxChMc", s_loraTxCh[1], sizeof s_loraTxCh[1]);
     s_lightOn      = s_prefs.getBool("ltOn", true);
     s_lightAlerts  = s_prefs.getBool("ltAlert", true);
     s_lightMsgs    = s_prefs.getBool("ltMsg", true);

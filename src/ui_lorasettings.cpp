@@ -9,6 +9,7 @@
 #include "lora_sniffer.h"
 #include "lora_profiles.h"
 #include "lora_myname.h"
+#include "lora_channels.h"
 #include "settings.h"
 #include "theme.h"
 #include "squachy.h"
@@ -49,6 +50,9 @@ struct Row {
     uint16_t valCol;
     bool     dim;          // a switch whose master is off, a built-in channel
     bool     editable;     // an edit line opens on this row
+    // CHANNELS: the channel the compose line's chip sends on gets a SEND tag;
+    // a section's hint is drawn at its right end ("SENDS ON LongFast").
+    bool     sendMark;
 };
 const uint8_t MAX_ROWS = 64;
 Row      s_rows[MAX_ROWS];
@@ -287,10 +291,22 @@ void buildChannels() {
         if (pass) snprintf(title, sizeof title, "MESHTASTIC  %u OF %u YOURS", (unsigned)mtU, (unsigned)mtM);
         else      snprintf(title, sizeof title, "MESHCORE  %u OF %u YOURS", (unsigned)mcU, (unsigned)mcM);
         section(title);
+        // Which channel the chip sends on, said on the section line too: the
+        // network's default may be a quiet preset that has no row below.
+        const uint8_t pick = Lora::Chan::txPick(want);
+        {
+            Row& sec = s_rows[s_rowN - 1];
+            char nm[24];
+            Lora::Chan::txName(want, pick, nm, sizeof nm);
+            snprintf(sec.hint, sizeof sec.hint, "SENDS ON %s", nm);
+            sec.valCol = pass ? Theme::CYAN : Theme::PINK;
+        }
         for (uint8_t i = 0; i < n && s_rowN < MAX_ROWS - 1; i++) {
             Lora::ChannelRow c;
             if (!Lora::channelRow(i, c) || c.proto != want) continue;
             Row& r = add(CHAN_ROW, c.name, i);
+            Lora::Proto rp; uint8_t ri = 0;
+            r.sendMark = Lora::channelRowKey(i, rp, ri) && rp == want && ri == pick;
             char key[24];
             Lora::channelKeyPreview(i, key, sizeof key);
             if (c.builtIn) {
@@ -380,14 +396,42 @@ void drawRows(TFT_eSPI& t) {
         if (r.section) {
             small(t, 6, y + 6, r.label, Theme::PURPLE, Theme::BG);
             const int tw = t.textWidth(r.label);
-            t.drawFastHLine(6 + tw + 6, y + 9, W - 12 - tw - 6, dim(Theme::PURPLE, 90));
+            int lineEnd = W - 6;
+            if (r.hint[0]) {
+                // Right-aligned, and cut from its end when a long title and
+                // a long channel name will not both fit.
+                char h[48];
+                snprintf(h, sizeof h, "%s", r.hint);
+                size_t hn = strlen(h);
+                const int room = (W - 6) - (6 + tw + 12);
+                while (hn && t.textWidth(h) > room) h[--hn] = '\0';
+                if (hn) {
+                    const int hw = t.textWidth(h);
+                    small(t, W - 6 - hw, y + 6, h, r.valCol, Theme::BG);
+                    lineEnd = W - 6 - hw - 6;
+                }
+            }
+            t.drawFastHLine(6 + tw + 6, y + 9, lineEnd - (6 + tw + 6), dim(Theme::PURPLE, 90));
         } else if (editOn(r)) {
             t.fillRect(4, y, W - 8, ROW_H - 1, Theme::BG);
             drawEditLine(t, r, y);
         } else {
             const uint16_t lc = r.dim ? dim(Theme::WHITE, 120) : Theme::WHITE;
             const int px = pillX(t, r.value);
-            clipText(t, 10, y + 4, r.label, lc, Theme::BG, px - 16);
+            if (r.sendMark) {
+                // The SEND tag after the name: the channel the chip sends on.
+                const int tagW = 6 * 4 + 6;
+                clipText(t, 10, y + 4, r.label, lc, Theme::BG, px - 16 - tagW - 6);
+                char cut[64];
+                snprintf(cut, sizeof cut, "%s", r.label);
+                size_t cn = strlen(cut);
+                while (cn && t.textWidth(cut) > px - 16 - tagW - 6) cut[--cn] = '\0';
+                const int tx = 10 + t.textWidth(cut) + 6;
+                t.fillRoundRect(tx, y + 3, tagW, 10, 2, Theme::VAPOR_YELLOW);
+                small(t, tx + 3, y + 4, "SEND", Theme::BG, Theme::VAPOR_YELLOW);
+            } else {
+                clipText(t, 10, y + 4, r.label, lc, Theme::BG, px - 16);
+            }
             clipText(t, 10, y + 15, r.hint, dim(Theme::WHITE, r.dim ? 90 : 130), Theme::BG, px - 16);
             drawPill(t, y, r.value, r.dim ? dim(r.valCol, 130) : r.valCol);
             t.drawFastHLine(10, y + ROW_H - 1, W - 20, dim(Theme::WHITE, 16));

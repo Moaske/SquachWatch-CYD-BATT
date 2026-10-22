@@ -114,6 +114,17 @@ struct GroupText {
 };
 bool parseGroupText(const uint8_t* plain, uint8_t len, GroupText& g);
 
+// A group text from us on channel `c`, sealed the way openSealed() opens one:
+// a flood GRP_TXT header (0x15), no path, the channel's hash, two bytes of
+// HMAC-SHA256 over the ciphertext, then AES-128-ECB over {timestamp, flags 0,
+// "name: text"} zero-padded to a block. Hashtag and keyed channels alike --
+// both are sixteen bytes of key by the time they are a Channel. `f` needs 5 +
+// 192 bytes; a long text is cut to fit. `echo`, when given, gets what a relay's
+// copy decodes to (the chat's dedupe key is made from it). Returns the frame's
+// length, 0 for a muted or empty channel. Pure, for test/lora_meshcore_test.cpp.
+uint16_t sealGroupText(const Channel& c, uint32_t stamp, const char* name, const char* text, uint8_t* f,
+                       GroupText* echo = nullptr);
+
 // ---- trace and control ----------------------------------------------------
 struct Trace {
     uint32_t tag, auth;

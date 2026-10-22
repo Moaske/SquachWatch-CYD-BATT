@@ -6,7 +6,7 @@
 #include <TFT_eSPI.h>
 #include <stdint.h>
 
-enum class LoraChatHit : uint8_t { NONE = 0, TAB_MESHTASTIC, TAB_MESHCORE };
+enum class LoraChatHit : uint8_t { NONE = 0, TAB_MESHTASTIC, TAB_MESHCORE, CHANNEL };
 
 void        uiLoraChatInit(TFT_eSPI& t);
 void        uiLoraChatTick(TFT_eSPI& t, uint32_t now);
@@ -20,3 +20,6 @@ uint16_t    uiLoraChatUnread();
 // The T-Deck's keyboard while the chats are up: printable keys type, '\b'
 // deletes, '\n' sends what is typed on the open tab's network.
 void        uiLoraChatKey(char c, uint32_t now);
+// The T-Deck compose line's channel chip (CHANNEL above): step the open tab's
+// network to its next channel that can be sent on (Lora::Chan::txStep).
+void        uiLoraChatStepChannel(uint32_t now);
