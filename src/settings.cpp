@@ -1,5 +1,8 @@
 // SquachWatch-CYD — persisted user settings implementation
 #include "settings.h"
+#include "lora_myname.h"
+#include <stdio.h>
+#include <strings.h>
 #include <string.h>
 #include "clock.h"
 #include "theme.h"
@@ -205,6 +208,16 @@ static bool     s_loraLookups  = false;
 static bool     s_loraLkCall   = false;
 static bool     s_loraLkOgn    = false;
 static bool     s_loraLkFeed   = false;
+// The LORA SETTINGS page's: the name on the air, the NodeInfo switch, and how
+// detection behaves around the LoRa pages. See settings.h.
+static char     s_loraName[Lora::MyName::NAME_LEN + 1]   = { 0 };
+static char     s_loraShort[Lora::MyName::SHORT_LEN + 1] = { 0 };
+static bool     s_loraAnnounce = true;
+static uint8_t  s_loraDetect   = 0;   // ON
+static bool     s_loraAlerts   = true;
+static uint8_t  s_loraHops     = 3;
+static bool     s_loraMsgSnd   = true;
+static char     s_loraMtPre[16] = { 0 };   // "" = LongFast
 
 // ---- status light --------------------------------------------------------
 static bool    s_lightOn     = true;
@@ -429,6 +442,44 @@ void toggleLoraLookupOgn() { s_loraLkOgn = !s_loraLkOgn; s_prefs.putBool("loraLk
 bool loraLookupFeed()       { return s_loraLkFeed; }
 void toggleLoraLookupFeed() { s_loraLkFeed = !s_loraLkFeed; s_prefs.putBool("loraLkMcF", s_loraLkFeed); }
 
+// Keys 8, 9, 8, 7 and 8 characters; none begins "loraChans". An empty name
+// removes its key rather than storing "": the default is the absence.
+const char* loraName() { return s_loraName; }
+void setLoraName(const char* n) {
+    snprintf(s_loraName, sizeof s_loraName, "%s", n ? n : "");
+    Lora::MyName::clean(s_loraName, Lora::MyName::NAME_LEN);
+    if (s_loraName[0]) s_prefs.putString("loraName", s_loraName);
+    else               s_prefs.remove("loraName");
+}
+const char* loraShortName() { return s_loraShort; }
+void setLoraShortName(const char* n) {
+    snprintf(s_loraShort, sizeof s_loraShort, "%s", n ? n : "");
+    Lora::MyName::clean(s_loraShort, Lora::MyName::SHORT_LEN);
+    if (s_loraShort[0]) s_prefs.putString("loraShort", s_loraShort);
+    else                s_prefs.remove("loraShort");
+}
+bool loraAnnounce()       { return s_loraAnnounce; }
+void toggleLoraAnnounce() { s_loraAnnounce = !s_loraAnnounce; s_prefs.putBool("loraAnnc", s_loraAnnounce); }
+uint8_t loraDetect() { return s_loraDetect; }
+void cycleLoraDetect() { s_loraDetect = (uint8_t)((s_loraDetect + 1) % 3); s_prefs.putUChar("loraDet", s_loraDetect); }
+const char* loraDetectName() {
+    static const char* const N[3] = { "ON", "OFF ON LORA PAGE", "OFF" };
+    return N[s_loraDetect < 3 ? s_loraDetect : 0];
+}
+bool loraAlerts()       { return s_loraAlerts; }
+void toggleLoraAlerts() { s_loraAlerts = !s_loraAlerts; s_prefs.putBool("loraAlrt", s_loraAlerts); }
+uint8_t loraHops() { return s_loraHops; }
+void cycleLoraHops() { s_loraHops = (uint8_t)(s_loraHops >= 7 ? 1 : s_loraHops + 1); s_prefs.putUChar("loraHops", s_loraHops); }
+bool loraMsgSound()       { return s_loraMsgSnd; }
+void toggleLoraMsgSound() { s_loraMsgSnd = !s_loraMsgSnd; s_prefs.putBool("loraMsgSnd", s_loraMsgSnd); }
+const char* loraMtPreset() { return s_loraMtPre; }
+void setLoraMtPreset(const char* name) {
+    snprintf(s_loraMtPre, sizeof s_loraMtPre, "%s", name ? name : "");
+    // LongFast is the default, and the default is the absence of the key.
+    if (s_loraMtPre[0] && strcasecmp(s_loraMtPre, "LongFast") != 0) s_prefs.putString("loraMtPre", s_loraMtPre);
+    else { s_loraMtPre[0] = '\0'; s_prefs.remove("loraMtPre"); }
+}
+
 // The channel list. Bytes in, bytes out: the store does not know or care what
 // a MeshCore hashtag is, which is why this pair takes a blob and the record
 // format lives with the decoders that write it.
@@ -619,6 +670,20 @@ void load() {
     s_loraLkCall   = s_prefs.getBool("loraLkCal", false);
     s_loraLkOgn    = s_prefs.getBool("loraLkOgn", false);
     s_loraLkFeed   = s_prefs.getBool("loraLkMcF", false);
+    s_loraName[0] = s_loraShort[0] = '\0';
+    if (s_prefs.isKey("loraName"))  s_prefs.getString("loraName", s_loraName, sizeof s_loraName);
+    if (s_prefs.isKey("loraShort")) s_prefs.getString("loraShort", s_loraShort, sizeof s_loraShort);
+    Lora::MyName::clean(s_loraName, Lora::MyName::NAME_LEN);
+    Lora::MyName::clean(s_loraShort, Lora::MyName::SHORT_LEN);
+    s_loraAnnounce = s_prefs.getBool("loraAnnc", true);
+    s_loraDetect   = s_prefs.getUChar("loraDet", 0);
+    if (s_loraDetect > 2) s_loraDetect = 0;
+    s_loraAlerts   = s_prefs.getBool("loraAlrt", true);
+    s_loraHops     = s_prefs.getUChar("loraHops", 3);
+    if (s_loraHops < 1 || s_loraHops > 7) s_loraHops = 3;
+    s_loraMsgSnd   = s_prefs.getBool("loraMsgSnd", true);
+    s_loraMtPre[0] = '\0';
+    if (s_prefs.isKey("loraMtPre")) s_prefs.getString("loraMtPre", s_loraMtPre, sizeof s_loraMtPre);
     s_lightOn      = s_prefs.getBool("ltOn", true);
     s_lightAlerts  = s_prefs.getBool("ltAlert", true);
     s_lightMsgs    = s_prefs.getBool("ltMsg", true);

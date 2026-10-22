@@ -26,6 +26,7 @@
 #include "lora_feed.h"
 #include "lora_ident.h"
 #include "lora_names.h"
+#include "lora_myname.h"
 #include "clock.h"
 #include <Preferences.h>
 #include "settings.h"
@@ -512,6 +513,24 @@ static void namesSave(uint32_t now) {
     free(buf);
 }
 
+// CLEAN UP on LORA SETTINGS. Both under the lock the radio task writes them in.
+void clearChats() {
+    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(200)) != pdTRUE) return;
+    Msgs::clear();
+    xSemaphoreGive(s_lock);
+    Serial.println("[lora] chats cleared");
+}
+void forgetNames() {
+    if (s_lock && xSemaphoreTake(s_lock, pdMS_TO_TICKS(200)) == pdTRUE) {
+        Names::clear();
+        xSemaphoreGive(s_lock);
+    }
+    Preferences p;
+    if (p.begin(NAMES_NS, false)) { p.clear(); p.end(); }
+    s_namesSavedAt = 0;
+    Serial.println("[lora] remembered Meshtastic names forgotten, stored copy included");
+}
+
 bool begin() {
     s_lock = xSemaphoreCreateMutex();
     // Before the radio, like the channel keys below: the names are the
@@ -742,30 +761,44 @@ void tick(uint32_t now) {
 }
 
 void setMode(Mode m) { if (m == Mode::SWEEP) { memset(s_specLive, 0, sizeof s_specLive); memset(s_specHold, 0, sizeof s_specHold); s_sweeps = 0; } s_mode = m; }
-// The first profile in the table for a network's mesh presets: LongFast for
-// Meshtastic, the regional preset for MeshCore.
+// The profile a network listens and sends on: for Meshtastic the preset
+// chosen on the LORA SETTINGS page (Settings::loraMtPreset(), LongFast when
+// nothing is chosen or this band plan has no such row), for MeshCore the
+// regional preset, the first in the table. Every listen and every send goes
+// through here, so the choice reaches the BOTH hop on the T-Deck too.
 static bool meshProfile(Proto want, uint8_t& idx) {
-    for (uint8_t i = 0; i < profileCount(); i++) {
-        const Profile& p = profile(i);
-        if (p.hint == want && (p.group == PG_MESH_EU || p.group == PG_MESH_US)) { idx = i; return true; }
-    }
-    return false;
+    const int16_t i = meshPresetFind(want, want == Proto::MESHTASTIC ? Settings::loraMtPreset() : nullptr);
+    if (i < 0) return false;
+    idx = (uint8_t)i;
+    return true;
+}
+// The primary channel's name for a Meshtastic profile: the preset's own
+// ("MT MediumFast" -> "MediumFast"), which is what a stock node's default
+// channel is called and what its one-byte hash is taken over.
+static const char* presetChannel(const Profile& prof) {
+    return strncmp(prof.name, "MT ", 3) == 0 ? prof.name + 3 : "LongFast";
 }
 
 // A default-channel Meshtastic frame from us: the 16-byte header in the clear,
-// Data{portnum, payload} under the published LongFast key. The node number is
-// ours alone, from the MAC. Returns the frame's length; `id` gets its packet id.
-static uint16_t meshtasticFrame(uint8_t port, const uint8_t* payload, size_t plen, uint8_t* f, uint32_t& id) {
+// Data{portnum, payload} under the published default key, on the preset's
+// primary channel `chan`. The node number is ours alone, from the MAC.
+// Returns the frame's length; `id` gets its packet id.
+static uint16_t meshtasticFrame(uint8_t port, const uint8_t* payload, size_t plen, uint8_t* f, uint32_t& id,
+                                const char* chan) {
     if (plen > 200) plen = 200;
     const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
     id = esp_random();
     LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
     LoraCrypto::wr32le(f + 4, from);
     LoraCrypto::wr32le(f + 8, id);
-    f[12] = 3 | (3 << 5);           // hop limit 3, hop start 3
+    // Hop limit and hop start, both HOPS from LORA SETTINGS (1-7; 3 by
+    // default, Meshtastic's own).
+    uint8_t hops = Settings::loraHops();
+    if (hops < 1 || hops > 7) hops = 3;
+    f[12] = (uint8_t)(hops | (hops << 5));
     uint8_t key[16];
     Meshtastic::expandPsk(1, key);
-    f[13] = Meshtastic::channelHash("LongFast", key, 16);
+    f[13] = Meshtastic::channelHash(chan && *chan ? chan : "LongFast", key, 16);
     f[14] = 0; f[15] = (uint8_t)from;
     uint8_t* q = f + 16;
     *q++ = 0x08; *q++ = port; *q++ = 0x12;
@@ -802,30 +835,34 @@ static bool transmitOn(const Profile& prof, const uint8_t* f, uint16_t n, int8_t
 // name (SQWT, or the first four characters of a changed name), hardware
 // PRIVATE_HW.
 static uint32_t s_nodeInfoAt = 0;
-static bool     s_nodeInfoSent = false;
+static volatile bool s_nodeInfoSent = false;
 static const uint32_t NODEINFO_EVERY_MS = 3u * 3600u * 1000u;
+
+// A name changed on LORA SETTINGS: the next Meshtastic text says so first.
+void identityChanged() { s_nodeInfoSent = false; }
 
 static void announceIfDue(const Profile& prof, const char* name, int8_t dbm) {
     const uint32_t now = millis();
+    // ANNOUNCE NAME off: the mesh sees the node number, as before 2026-10-21.
+    if (!Settings::loraAnnounce()) return;
     if (s_nodeInfoSent && now - s_nodeInfoAt < NODEINFO_EVERY_MS) return;
     const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
     char idStr[12], shortName[5];
     snprintf(idStr, sizeof idStr, "!%08lx", (unsigned long)from);
     size_t ln = strlen(name); if (ln > 39) ln = 39;
-    // The short name: SQWT while he still goes by the default SQUACHY (the
-    // owner's pick, 2026-10-21 -- "SQUA" read as nothing), otherwise the first
-    // four characters of the name he was given.
-    size_t sn = 0;
-    if (!strcmp(name, "SQUACHY")) { memcpy(shortName, "SQWT", 4); sn = 4; }
-    else for (; sn < 4 && name[sn]; sn++) shortName[sn] = name[sn];
-    shortName[sn] = '\0';
+    // The short name: the one typed on LORA SETTINGS, else SQWT while he
+    // still goes by the default SQUACHY (the owner's pick, 2026-10-21 --
+    // "SQUA" read as nothing), else the first four characters of the name.
+    // One rule, host-tested: MyName::shortName (include/lora_myname.h).
+    MyName::shortName(Settings::loraShortName(), name, shortName, sizeof shortName);
+    const size_t sn = strlen(shortName);
     uint8_t user[80]; size_t u = 0;
     user[u++] = 0x0A; user[u++] = (uint8_t)strlen(idStr); memcpy(user + u, idStr, strlen(idStr)); u += strlen(idStr);
     user[u++] = 0x12; user[u++] = (uint8_t)ln;          memcpy(user + u, name, ln);              u += ln;
     user[u++] = 0x1A; user[u++] = (uint8_t)sn;          memcpy(user + u, shortName, sn);         u += sn;
     user[u++] = 0x28; user[u++] = 0xFF; user[u++] = 0x01;   // hw_model 255, PRIVATE_HW
     uint8_t f[256]; uint32_t id = 0;
-    const uint16_t n = meshtasticFrame((uint8_t)Meshtastic::PORT_NODEINFO, user, u, f, id);
+    const uint16_t n = meshtasticFrame((uint8_t)Meshtastic::PORT_NODEINFO, user, u, f, id, presetChannel(prof));
     const bool ok = transmitOn(prof, f, n, dbm);
     Serial.printf("[lora] announced \"%s\" (%s) to Meshtastic: %s\n", name, shortName, ok ? "ok" : "FAILED");
     if (ok) { s_nodeInfoSent = true; s_nodeInfoAt = now; }
@@ -872,7 +909,7 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
     } else if (p == Proto::MESHTASTIC) {
         // A default-channel text, built the way lora_meshtastic_test builds one.
         uint32_t id = 0;
-        n = meshtasticFrame((uint8_t)Meshtastic::PORT_TEXT, (const uint8_t*)text, strlen(text), f, id);
+        n = meshtasticFrame((uint8_t)Meshtastic::PORT_TEXT, (const uint8_t*)text, strlen(text), f, id, presetChannel(prof));
         key = Lora::Msgs::meshtasticKey(0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF), id);
         announceIfDue(prof, name, dbm);
     } else return false;
@@ -882,7 +919,11 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
         // Our own copy in the ring, so the chat shows what went out.
         Packet pk; memset(&pk, 0, sizeof pk);
         pk.proto = p; pk.profile = idx; pk.ms = millis();
-        Msgs::note(p, 0, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
+        // On the preset's primary channel: LongFast's is channel 0, a
+        // MediumFast send's is MediumFast's row, so it files beside replies.
+        int chan = p == Proto::MESHTASTIC ? Meshtastic::findChannel(presetChannel(prof)) : 0;
+        if (chan < 0) chan = 0;
+        Msgs::note(p, (uint8_t)chan, p == Proto::MESHTASTIC ? (uint8_t)Meshtastic::PORT_TEXT : (uint8_t)MeshCore::TYPE_GRP_TXT,
                    "YOU", 0, text, pk, millis(), true, 0, key);
     }
     return ok;
@@ -1279,6 +1320,77 @@ static bool channelWhich(const char*& r, bool& mc) {
     return *r != '\0';
 }
 
+// Adding one, for the console's LORA CHAN and the LORA SETTINGS page's
+// CHANNELS alike: the one path that checks, adds and stores.
+enum class ChanAdd : uint8_t { OK, NO_NAME, HELD, REFUSED };
+static ChanAdd channelAddRaw(bool mc, const char* name, const char* key) {
+    if (!name || !name[0]) return ChanAdd::NO_NAME;
+    if ((mc ? MeshCore::findChannel(name) : Meshtastic::findChannel(name)) >= 0) return ChanAdd::HELD;
+    const bool ok = mc ? MeshCore::addChannel(name, key && key[0] ? key : nullptr)
+                       : Meshtastic::addChannel(name, key ? key : "");
+    if (!ok) return ChanAdd::REFUSED;
+    saveOrWarn();
+    return ChanAdd::OK;
+}
+
+bool channelAdd(Proto p, const char* name, const char* key, char* msg, size_t cap) {
+    const bool mc = p == Proto::MESHCORE;
+    const ChanAdd r = channelAddRaw(mc, name, key);
+    if (msg && cap) {
+        switch (r) {
+            case ChanAdd::OK:      snprintf(msg, cap, "ADDED AND STORED"); break;
+            case ChanAdd::NO_NAME: snprintf(msg, cap, "A CHANNEL NEEDS A NAME"); break;
+            case ChanAdd::HELD:    snprintf(msg, cap, "ALREADY IN THE LIST"); break;
+            default:               snprintf(msg, cap, mc && !(key && key[0]) && name && name[0] != '#'
+                                            ? "NEEDS A KEY, OR A #TAG NAME" : "REFUSED: TABLE FULL OR BAD KEY"); break;
+        }
+    }
+    if (r == ChanAdd::OK) Serial.printf("[lora] %s \"%s\" added from LORA SETTINGS and stored\n", mc ? "MC" : "MT", name);
+    return r == ChanAdd::OK;
+}
+
+bool channelDropRow(uint8_t row) {
+    ChannelRow r;
+    if (!channelRow(row, r) || r.builtIn) return false;
+    Proto p; uint8_t i = 0;
+    if (!channelRowKey(row, p, i)) return false;
+    const bool ok = p == Proto::MESHCORE ? MeshCore::removeChannel(i) : Meshtastic::removeChannel(i);
+    if (ok) { saveOrWarn(); Serial.printf("[lora] %s \"%s\" dropped from LORA SETTINGS\n", p == Proto::MESHCORE ? "MC" : "MT", r.name); }
+    return ok;
+}
+
+// What a saved key looks like on screen: its first and last four characters
+// and nothing between, in the form it is usually typed -- base64 for
+// Meshtastic, hex for MeshCore. A hashtag's key is its name, so it says so.
+void channelKeyPreview(uint8_t row, char* out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = '\0';
+    Proto p; uint8_t i = 0;
+    if (!channelRowKey(row, p, i)) return;
+    char full[64] = { 0 };
+    if (p == Proto::MESHCORE) {
+        const MeshCore::Channel c = MeshCore::channel(i);
+        if (c.derived) { snprintf(out, cap, "KEY FROM ITS #NAME"); return; }
+        for (int k = 0; k < 16; k++) snprintf(full + 2 * k, 3, "%02x", c.key[k]);
+    } else {
+        const Meshtastic::Channel c = Meshtastic::channel(i);
+        if (!c.keyLen) { snprintf(out, cap, "NO KEY (PLAINTEXT)"); return; }
+        static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        size_t o = 0;
+        for (uint8_t k = 0; k < c.keyLen && o + 4 < sizeof full; k += 3) {
+            const uint32_t v = ((uint32_t)c.key[k] << 16) | (k + 1 < c.keyLen ? (uint32_t)c.key[k + 1] << 8 : 0) |
+                               (k + 2 < c.keyLen ? c.key[k + 2] : 0);
+            full[o++] = B64[(v >> 18) & 63]; full[o++] = B64[(v >> 12) & 63];
+            full[o++] = k + 1 < c.keyLen ? B64[(v >> 6) & 63] : '=';
+            full[o++] = k + 2 < c.keyLen ? B64[v & 63] : '=';
+        }
+        full[o] = '\0';
+    }
+    const size_t n = strlen(full);
+    if (n <= 8) snprintf(out, cap, "%s", full);
+    else        snprintf(out, cap, "%.4s....%s", full, full + n - 4);
+}
+
 static bool channelConsole(const char* r) {
     while (*r == ' ') r++;
     if (!*r) { channelList(); return true; }
@@ -1329,6 +1441,9 @@ static bool channelConsole(const char* r) {
     if (strncasecmp(r, "DROP", 4) == 0 || strncasecmp(r, "MUTE", 4) == 0) {
         const bool drop = strncasecmp(r, "DROP", 4) == 0;
         const char* a2 = r + 4;
+        // "DROP MC x": past the space first, or channelWhich sees " MC" and
+        // refuses (it did, until 2026-10-21; only "DROPMC x" worked).
+        while (*a2 == ' ') a2++;
         bool mc = false;
         if (!channelWhich(a2, mc)) {
             Serial.printf("[lora] LORA CHAN %s MC|MT <name> -- the name as LORA CHAN prints it\n", drop ? "DROP" : "MUTE");
@@ -1377,19 +1492,17 @@ static bool channelConsole(const char* r) {
     } else {
         strncpy(name, a2, sizeof name - 1);
     }
-    if (!name[0]) { Serial.println("[lora] a channel needs a name"); return true; }
-    if ((mc ? MeshCore::findChannel(name) : Meshtastic::findChannel(name)) >= 0) {
+    const ChanAdd res = channelAddRaw(mc, name, key);
+    if (res == ChanAdd::NO_NAME) { Serial.println("[lora] a channel needs a name"); return true; }
+    if (res == ChanAdd::HELD) {
         Serial.printf("[lora] %s \"%s\" is already in the list\n", mc ? "MC" : "MT", name);
         return true;
     }
-    const bool ok = mc ? MeshCore::addChannel(name, key[0] ? key : nullptr)
-                       : Meshtastic::addChannel(name, key);
-    if (!ok) {
+    if (res == ChanAdd::REFUSED) {
         Serial.printf("[lora] %s \"%s\": refused - table full, or the key is neither 16 nor 32 bytes of base64 or hex\n",
                       mc ? "MC" : "MT", name);
         return true;
     }
-    saveOrWarn();
     if (mc) {
         const uint8_t last = (uint8_t)(MeshCore::channelCount() - 1);
         const MeshCore::Channel c = MeshCore::channel(last);

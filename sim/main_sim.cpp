@@ -78,6 +78,7 @@
 #include "png_writer.h"
 #include "touch_cal.h"
 #include "ui_lorahome.h"
+#include "ui_lorasettings.h"
 #include "lora_sim.h"           // the made-up band the LORA page reads
 
 // A few plausible log entries so screens have something real to draw --
@@ -297,6 +298,9 @@ static void usage() {
         "                    SQUACHSIM_LORAQUIET=s: no packets for s seconds before the capture\n"
         "                    SQUACHSIM_LORATYPE=TEXT: typed from the capture, then Enter\n"
         "                    SQUACHSIM_LORATX=1: LORA TX on; SQUACHSIM_LORANEW=n: the NEW badge\n"
+        "  lorasettings      the T-Deck's LORA SETTINGS page (--size 320x240): --scroll n moves it n rows,\n"
+        "                    --tap f:x:y taps it, SQUACHSIM_LORATYPE types into an open edit line\n"
+        "                    ('|' is Enter), SQUACHSIM_LORAREST=1 says the radios are resting\n"
         "  dex               --pose N opens entry N\'s card (1-17); 0 is the index\n"
         "  touchcal          the touch calibration, played by a scripted finger:\n"
         "                    --frames skips that many 66 ms frames, --sequence films\n"
@@ -705,7 +709,7 @@ int main(int argc, char** argv) {
     // last 80 seconds of packets -- and all of it is millis(), which starts at
     // zero here. An hour after boot, unless pinned, so none of it is "before
     // the board was on".
-    else if (screen == "lora") now = 3600000u;
+    else if (screen == "lora" || screen == "lorasettings") now = 3600000u;
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.
@@ -728,8 +732,11 @@ int main(int argc, char** argv) {
 
     // The LORA page's compose line, typed: one key every two frames from the
     // capture (SQUACHSIM_LORATYPE), then Enter.
-    const char* loraType = screen == "lora" ? getenv("SQUACHSIM_LORATYPE") : nullptr;
-    const uint32_t loraTypeAt = now + (uint32_t)frames * STEP_MS;
+    const char* loraType = (screen == "lora" || screen == "lorasettings") ? getenv("SQUACHSIM_LORATYPE") : nullptr;
+    const bool loraRest = getenv("SQUACHSIM_LORAREST") != nullptr;
+    // LORA SETTINGS types from frame 30 of the warm-up, after the --tap that
+    // opens an edit line, so the capture shows the line typed.
+    const uint32_t loraTypeAt = now + (uint32_t)(screen == "lorasettings" ? 30 : frames) * STEP_MS;
     size_t loraTyped = 0;
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
@@ -856,6 +863,17 @@ int main(int argc, char** argv) {
                     uiLoraHomeKey(loraTyped < len ? loraType[loraTyped] : '\n', t);
             }
             uiLoraHomeTick(frame, t);
+        }
+        else if (screen == "lorasettings") {
+            SimLora::step(t);
+            // Typed into whatever edit line a --tap opened, from the capture
+            // on; a '|' in the text is Enter.
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraSettingsKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraSettingsTick(frame, t, loraRest);
         }
         else if (screen == "poses") {
             // Every arm movement he has, for the costume test in
@@ -1026,6 +1044,12 @@ int main(int argc, char** argv) {
         SimLora::begin(lc);
         uiLoraHomeInit(frame);
         uiLoraHomeSetNet(lc.net);
+    }
+    else if (screen == "lorasettings") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        SimLora::begin(lc);
+        uiLoraSettingsInit(frame, true);
     }
     else if (screen == "wifiadd")    uiWifiAddInit(frame);
     else if (screen == "dex") {
@@ -1221,6 +1245,7 @@ int main(int argc, char** argv) {
         else if (screen == "light")      uiLightScroll(1);
         else if (screen == "detfilter")  uiDetFilterScroll(1);
         else if (screen == "ignorelist") uiIgnoreListScroll(1);
+        else if (screen == "lorasettings") uiLoraSettingsScrollBy(26);
         else                             uiSettingsScroll(1);
     }
 
@@ -1232,6 +1257,7 @@ int main(int argc, char** argv) {
     // landed, then a pet (or, on his shades with the aura lit, a reading).
     // Anything else is the background's.
     auto tapAt = [&](int x, int y, uint32_t when) {
+        if (screen == "lorasettings") { uiLoraSettingsTap(x, y, when); return; }
         // The pet first, as on the board: a still tap is a grab and a let-go.
         if (Pet::clippyHit(x, y)) { Pet::clippyGrab(x, y, when); Pet::clippyRelease(when); }
         else if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }

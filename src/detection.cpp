@@ -2023,6 +2023,9 @@ void DetectionEngine::postRawBle(RawBleResult r) {
 }
 
 void DetectionEngine::startRawBleScan() {
+    // A rest (the watch's duty cycle, the T-Deck's detections OFF) gives way:
+    // the radios come back first, or the scan would hear nothing.
+    if (g_rawMode == RawScanMode::REST) wakeRadios();
     if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
     _rawBleCount = 0;
     // The continuous NimBLE scan (started once, forever, in init())
@@ -2049,6 +2052,7 @@ const RawBleResult* DetectionEngine::rawBleAt(uint8_t idx) const {
 // The driver's own network scan is not on the link yet: a WIFI sweep on the
 // Tab5 finishes at once with nothing to show.
 void DetectionEngine::startRawWifiScan() {
+    if (g_rawMode == RawScanMode::REST) wakeRadios();
     g_rawMode = RawScanMode::WIFI;
     sniffOff();
 }
@@ -2062,6 +2066,8 @@ const uint8_t* DetectionEngine::rawWifiBssid(uint8_t) const { return nullptr; }
 
 #else
 void DetectionEngine::startRawWifiScan() {
+    // A rest gives way first: WiFi is stopped outright while resting.
+    if (g_rawMode == RawScanMode::REST) wakeRadios();
     // Gate the BLE callback off first (it'd otherwise still be live
     // during the scan) before touching the radio.
     g_rawMode = RawScanMode::WIFI;
@@ -2135,10 +2141,14 @@ static void updScanStopOnHost(struct ble_npl_event*) {
 
 static void updScanStartOnHost(struct ble_npl_event*) {
     NimBLEScan* scan = NimBLEDevice::getScan();
-    if (g_rawMode == RawScanMode::NONE && scan && !scan->isScanning()) scan->start(0, false, false);
+    // NONE as before; and a raw scan that took over from a rest straight
+    // after the wake (startRawBleScan) wants the continuous scan running too.
+    const bool want = g_rawMode == RawScanMode::NONE || g_rawMode == RawScanMode::BLE || g_rawMode == RawScanMode::WIFI;
+    if (want && scan && !scan->isScanning()) scan->start(0, false, false);
 }
 
 void DetectionEngine::startUpdateRadio() {
+    if (g_rawMode == RawScanMode::REST) wakeRadios();   // a rest gives way to an update
     if (!s_updEvReady && bleLive()) {
         ble_npl_event_init(&s_updStopEv,  updScanStopOnHost,  nullptr);
         ble_npl_event_init(&s_updStartEv, updScanStartOnHost, nullptr);
@@ -2210,6 +2220,7 @@ void DetectionEngine::wakeRadios() {
 // No Bluetooth to stop or start: an update owns the radio by switching the
 // sniffer off, and a rest is the sniffer off until the wake.
 void DetectionEngine::startUpdateRadio() {
+    if (g_rawMode == RawScanMode::REST) wakeRadios();
     if (g_rawMode == RawScanMode::WIFI) rawScanDelete();
     g_rawMode = RawScanMode::UPDATE;
     sniffOff();

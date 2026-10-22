@@ -96,6 +96,7 @@ static void cydGpsTick(uint32_t now);
 #endif
 #include "privacy.h"
 #include "lora_sniffer.h"   // the watch's SX1262; inline no-ops elsewhere
+#include "lora_profiles.h"  // meshPresetFind, for LORASET PRESET
 #include "wardrive.h"
 #include "ui_bingo.h"
 #include "bingo.h"
@@ -389,6 +390,7 @@ static void drawCrashCard(TFT_eSPI& t) {
 #if SQUACH_LORA
 #include "ui_lorachat.h"
 #include "ui_lorahome.h"
+#include "ui_lorasettings.h"
 #endif
 
 // Two CYD board variants are supported from this one firmware:
@@ -1644,6 +1646,7 @@ static void tdeckKeysTick(uint32_t now) {
 #if SQUACH_LORA
     else if (state == AppState::LORA_CHAT) uiLoraChatKey(c, now);
     else if (state == AppState::LORA_HOME) uiLoraHomeKey(c, now);
+    else if (state == AppState::LORA_SETTINGS) uiLoraSettingsKey(c, now);
     // Enter on the home screen opens the LORA page, when the radio is on: the
     // keyboard is the reason to own a T-Deck (asked for 2026-10-15).
     else if (state == AppState::CLEAR && c == '\n' && Settings::loraListen() != 0) enterLoraHome();
@@ -2123,6 +2126,19 @@ static void restoreFrameBuffer();
 // is dismissed, not to CLEAR. Set in enterAlert(), spent here.
 static bool s_backToDesk = false;
 static void enterDesk();
+#if SQUACH_LORA && defined(TDECK_PLUS)
+// The same for an ALERT that popped over the LORA page, its settings or the
+// chats (ON-SCREEN DETECTIONS): dismissed, it goes back to that page. Set in
+// enterAlert(), spent in enterClear(), and cleared whenever one of those
+// pages is entered, so a stale one can never bounce a later BACK.
+static AppState s_backToLora = AppState::CLEAR;
+static void enterLoraChat();
+static void enterLoraHome();
+static void enterLoraSettings(bool fresh);
+static bool onLoraPage() {
+    return state == AppState::LORA_HOME || state == AppState::LORA_SETTINGS || state == AppState::LORA_CHAT;
+}
+#endif
 
 // The screens that run the raw scan, which switches detection off while it
 // runs. Leaving one by anything but its own BACK -- the lock icon, the gear,
@@ -2138,6 +2154,15 @@ static void enterClear() {
     if (Security::locked()) { enterLocked(); return; }
     restoreFrameBuffer();   // lent to a download that did not end in a restart
     if (s_backToDesk) { s_backToDesk = false; enterDesk(); return; }
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    if (s_backToLora != AppState::CLEAR) {
+        const AppState to = s_backToLora;
+        s_backToLora = AppState::CLEAR;
+        if (to == AppState::LORA_HOME)          { enterLoraHome(); return; }
+        if (to == AppState::LORA_SETTINGS)      { enterLoraSettings(false); return; }
+        if (to == AppState::LORA_CHAT)          { enterLoraChat(); return; }
+    }
+#endif
     Settings::deskActive(false);
     Theme::releaseClockBackdrop();   // the clock fire's heat, if the desk had one
     state = AppState::CLEAR;
@@ -2210,6 +2235,9 @@ static void twatchBuzz(Buzz kind);
 #endif
 static void enterAlert(const Detection& d) {
     s_backToDesk = (state == AppState::DESK);
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    s_backToLora = onLoraPage() ? state : AppState::CLEAR;
+#endif
     state = AppState::ALERT;
 #if defined(TWATCH_S3)
     twatchBuzz(Buzz::ALERT);
@@ -2431,6 +2459,7 @@ volatile bool g_consoleRotate = false;
 volatile bool g_consoleWatchTest = false; // WATCHTEST: watch the newest Bluetooth device, fire its alert
 volatile bool g_consoleRadioTest = false; // RADIO TEST: cycle even on the cable with the screen on (bench)
 volatile int8_t g_consoleSound = -1;      // SOUND n: play sound n on the speaker; 20/21 flip the amp pin (Freenove S3)
+volatile int8_t g_consoleLoraSet = -1;   // LORASET [DET|HOME]: LORA SETTINGS from the bench (the T-Deck)
 volatile bool g_consoleScreen  = false;   // SCREEN: say why the screen is dark, and light it (the BOOT-button boards)
 volatile bool g_consoleBatt    = false;   // BATT: one reading, now
 volatile bool g_consoleBattLog = false;   // BATTLOG: every sample kept, newest first
@@ -2941,12 +2970,16 @@ static void enterPower() {
 
 #if SQUACH_LORA
 static void enterLoraChat() {
+#if defined(TDECK_PLUS)
+    s_backToLora = AppState::CLEAR;
+#endif
     state = AppState::LORA_CHAT;
     transitionStart = millis();
     uiLoraChatInit(*canvas);
 }
 static void enterLoraHome() {
 #if defined(TDECK_PLUS)
+    s_backToLora = AppState::CLEAR;
     state = AppState::LORA_HOME;
     transitionStart = millis();
     uiLoraHomeInit(*canvas);
@@ -2954,6 +2987,58 @@ static void enterLoraHome() {
     enterLoraChat();   // the watches have no room for the landing page
 #endif
 }
+#if defined(TDECK_PLUS)
+static void enterLoraSettings(bool fresh) {
+    s_backToLora = AppState::CLEAR;
+    state = AppState::LORA_SETTINGS;
+    transitionStart = millis();
+    uiLoraSettingsInit(*canvas, fresh);
+}
+
+// SQUACHWATCH DETECTIONS on LORA SETTINGS: OFF ON LORA PAGE rests WiFi and
+// Bluetooth scanning while a LoRa page is up and wakes them on the way out;
+// OFF rests them everywhere, from boot, until switched back. The rest is the
+// T-Watch's (DetectionEngine::restRadios), which only ever starts from a
+// radio nobody else owns: an update, a WiFi download or a raw scan keeps it,
+// and this waits for it to finish. Only the rest this started is woken here.
+static bool s_loraRested = false;
+static void loraRadioTick(uint32_t now) {
+    static uint32_t triedAt = 0;
+    const uint8_t mode = Settings::loraDetect();
+    bool want = mode == 2 || (mode == 1 && onLoraPage());
+    if (state == AppState::UPDATE || OtaWifi::state() != OtaWifi::State::OFF || onRawScanScreen()) want = false;
+    if (want) {
+        if (engine.radiosResting()) return;
+        if (now - triedAt < 1000) return;                  // a refusal tries again in a second
+        triedAt = now;
+        if (engine.restRadios(true)) {
+            s_loraRested = true;
+            Serial.printf("[radio] resting for LoRa: %s\n", mode == 2 ? "detections OFF" : "on a LoRa page");
+        }
+    } else if (s_loraRested) {
+        s_loraRested = false;
+        if (engine.radiosResting()) { engine.wakeRadios(); Serial.println("[radio] awake: detections back on"); }
+    }
+}
+
+// ON-SCREEN DETECTIONS: a new catch may pop the ALERT card over the LoRa
+// pages, through the same gate the main screen uses (ALERT FILTER, the
+// IGNORE list, AUTO SNOOZE, the spam watch, and the sound that goes with
+// them). Off, it is still caught, logged and counted, and nothing is heard.
+static bool loraPageAlertTick(uint32_t now) {
+    if (!Settings::loraAlerts() || uiLoraSettingsEditing()) return false;
+    if (Squachy::onboardingActive()) return false;
+    const Detection* latest = engine.latest();
+    if (latest && (now - latest->firstSeen) < 200 &&
+        latest->conf >= Settings::minConfidence() && !IgnoreList::silenced(latest->mac) &&
+        alertMayInterrupt(*latest)) {
+        uiAlertSetRedacted(false);
+        enterAlert(*latest);
+        return true;
+    }
+    return false;
+}
+#endif
 #endif
 
 static void enterLight() {
@@ -5186,7 +5271,9 @@ static void tdeckLoraSoundTick(uint32_t now) {
     if (now - lastCheck < 1000) return;
     lastCheck = now;
     const uint16_t u = uiLoraChatUnread();
-    if (u > lastUnread && state != AppState::LORA_CHAT && state != AppState::LORA_HOME && (!lastDing || now - lastDing > 30000)) {
+    // MESSAGE SOUND (LORA SETTINGS) off: the pill and the badge still count.
+    if (u > lastUnread && Settings::loraMsgSound() && state != AppState::LORA_CHAT && state != AppState::LORA_HOME &&
+        (!lastDing || now - lastDing > 30000)) {
         lastDing = now;
         Sound::play(Sound::Id::MESSAGE);
     }
@@ -5207,7 +5294,7 @@ static void twatchLoraBuzzTick(uint32_t now) {
     if (now - lastCheck < 1000) return;
     lastCheck = now;
     const uint16_t u = uiLoraChatUnread();
-    if (u > lastUnread && state != AppState::LORA_CHAT && (!lastBuzz || now - lastBuzz > 30000)) {
+    if (u > lastUnread && Settings::loraMsgSound() && state != AppState::LORA_CHAT && (!lastBuzz || now - lastBuzz > 30000)) {
         lastBuzz = now;
         twatchBuzz(Buzz::MESSAGE);
     }
@@ -5976,6 +6063,19 @@ void loop() {
     twatchLoraBuzzTick(now);
 #elif SQUACH_LORA && defined(TDECK_PLUS)
     tdeckLoraSoundTick(now);
+    loraRadioTick(now);
+    if (g_consoleLoraSet >= 0) {
+        const int8_t c = g_consoleLoraSet;
+        g_consoleLoraSet = -1;
+        if (c == 0)      { enterLoraHome(); enterLoraSettings(true); Serial.println("[lora] LORA SETTINGS open"); }
+        else if (c == 1) { Settings::cycleLoraDetect(); Serial.printf("[lora] SQUACHWATCH DETECTIONS %s\n", Settings::loraDetectName()); }
+        else if (c == 3) {
+            uiLoraSettingsNextPreset();
+            const int16_t i = Lora::meshPresetFind(Lora::Proto::MESHTASTIC, Settings::loraMtPreset());
+            Serial.printf("[lora] MESHTASTIC PRESET %s\n", i >= 0 ? Lora::profile((uint8_t)i).name : "none");
+        }
+        else             { enterClear(); Serial.println("[lora] home"); }
+    }
 #endif
     floodTick();   // nothing outside a FLOOD_BENCH build
     // The heap at the first pass of loop(), for DIAGNOSTICS' BOOT line.
@@ -8868,6 +8968,9 @@ void loop() {
         }
 #if SQUACH_LORA
         case AppState::LORA_CHAT: {
+#if defined(TDECK_PLUS)
+            if (loraPageAlertTick(now)) break;   // ON-SCREEN DETECTIONS
+#endif
             drawTwoBand([&](TFT_eSPI& t, bool) { uiLoraChatTick(t, now); });
             static bool gestureActive = false;
             static bool gestureMoved  = false;
@@ -8911,6 +9014,7 @@ void loop() {
         }
 #if defined(TDECK_PLUS)
         case AppState::LORA_HOME: {
+            if (loraPageAlertTick(now)) break;   // ON-SCREEN DETECTIONS
             drawTwoBand([&](TFT_eSPI& t, bool) { uiLoraHomeTick(t, now); });
             static bool gestureActive = false;
             static int  gestureStartX = 0, gestureStartY = 0;
@@ -8928,8 +9032,41 @@ void loop() {
                         case LoraHomeHit::SWITCH:          uiLoraHomeToggleNet(); break;
                         case LoraHomeHit::TAB_MESHTASTIC:  uiLoraHomeSetNet(0); break;
                         case LoraHomeHit::TAB_MESHCORE:    uiLoraHomeSetNet(1); break;
+                        case LoraHomeHit::SETTINGS:        enterLoraSettings(true); break;
                         default: break;
                     }
+                }
+            }
+            break;
+        }
+        case AppState::LORA_SETTINGS: {
+            if (loraPageAlertTick(now)) break;   // ON-SCREEN DETECTIONS
+            const bool resting = engine.radiosResting();
+            drawTwoBand([&](TFT_eSPI& t, bool) { uiLoraSettingsTick(t, now, resting); });
+            // A drag scrolls the list by the finger's own pixels; a still,
+            // short touch is a tap.
+            static bool gestureActive = false;
+            static bool gestureMoved  = false;
+            static int  gestureStartX = 0, gestureStartY = 0;
+            static int  lastY = -1;
+            static uint32_t gestureDownMs = 0;
+            if (touchJustDown) {
+                gestureActive = true; gestureMoved = false;
+                gestureStartX = tp.x; gestureStartY = tp.y; lastY = tp.y; gestureDownMs = now;
+            }
+            if (tp.valid && gestureActive) {
+                const int dy = tp.y - lastY;
+                if (gestureMoved ? dy != 0 : abs(tp.y - gestureStartY) > 8) {
+                    gestureMoved = true;
+                    uiLoraSettingsScrollBy(-dy);     // finger up: the list follows it up
+                    lastY = tp.y;
+                }
+            }
+            if (touchJustUp && gestureActive) {
+                gestureActive = false;
+                if (!gestureMoved && now - gestureDownMs <= TAP_MAX_MS) {
+                    lastTouch = now;
+                    if (uiLoraSettingsTap(gestureStartX, gestureStartY, now) == LoraSetHit::BACK) enterLoraHome();
                 }
             }
             break;

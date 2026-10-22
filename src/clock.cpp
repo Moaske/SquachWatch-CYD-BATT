@@ -85,6 +85,7 @@ extern volatile bool g_consoleBatt;
 extern volatile bool g_consoleBattLog;
 extern volatile int8_t g_consoleSound;
 extern volatile bool g_consoleScreen;
+extern volatile int8_t g_consoleLoraSet;   // main.cpp: LORASET, the T-Deck's LORA SETTINGS from the bench
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
 extern volatile bool g_consolePowerOff;   // main.cpp: POWER OFF, the Freenove boards' deep sleep
 extern volatile bool g_consoleNapTest;       // main.cpp: NAPTEST, POWER OFF that wakes itself 3 s later
@@ -643,6 +644,15 @@ void pollSerial() {
         if (strcasecmp(line, "SOUND AMP LOW") == 0)  { g_consoleSound = 21; continue; }
         if (strncasecmp(line, "SOUND ", 6) == 0) { g_consoleSound = (int8_t)atoi(line + 6); continue; }
         if (strcasecmp(line, "SCREEN") == 0) { g_consoleScreen = true; continue; }
+        // LORASET: open LORA SETTINGS (over the LORA page); LORASET DET: step
+        // SQUACHWATCH DETECTIONS; LORASET PRESET: the next Meshtastic preset;
+        // LORASET HOME: back to the main screen. The
+        // T-Deck's bench, where a finger is not always to hand. Before LORA's
+        // own commands below, which take every line that starts LORA.
+        if (strcasecmp(line, "LORASET") == 0)      { g_consoleLoraSet = 0; continue; }
+        if (strcasecmp(line, "LORASET DET") == 0)  { g_consoleLoraSet = 1; continue; }
+        if (strcasecmp(line, "LORASET HOME") == 0) { g_consoleLoraSet = 2; continue; }
+        if (strcasecmp(line, "LORASET PRESET") == 0) { g_consoleLoraSet = 3; continue; }   // the next Meshtastic preset
 #if defined(FREENOVE_S3) || defined(FREENOVE_S3_35)
         if (strcasecmp(line, "POWER OFF") == 0) { g_consolePowerOff = true; continue; }
         if (strcasecmp(line, "NAPTEST") == 0)   { g_consoleNapTest = true; g_consolePowerOff = true; continue; }

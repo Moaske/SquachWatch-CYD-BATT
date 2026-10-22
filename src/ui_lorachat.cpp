@@ -13,7 +13,7 @@
 #include "theme.h"
 #include "privacy.h"
 #if defined(TDECK_PLUS)
-#include "squachy.h"    // the nickname, for what MeshCore shows before the colon
+#include "ui_lorasettings.h"   // uiLoraMyName(): what MeshCore shows before the colon
 #endif
 #include <Arduino.h>
 #include <string.h>
@@ -183,6 +183,8 @@ void uiLoraChatScroll(int delta) {
 
 uint16_t uiLoraChatUnread() {
     const uint32_t tot = ringTotal();
+    // The ring was cleared (LORA SETTINGS > CLEAR CHATS): start counting again.
+    if (tot < s_seenTotal) s_seenTotal = tot;
     return (uint16_t)(tot > s_seenTotal ? (tot - s_seenTotal > 999 ? 999 : tot - s_seenTotal) : 0);
 }
 
@@ -268,10 +270,9 @@ void uiLoraChatKey(char c, uint32_t now) {
     if (c == '\n') {
         if (!s_composeN) return;
         if (!Settings::loraTxDbm()) { snprintf(s_status, sizeof s_status, "LORA TX IS OFF: SETTINGS > LORA"); s_statusAt = now; return; }
-        const char* nick = Squachy::nickname();
-        if (!nick || !*nick) nick = "SQUACHY";
         snprintf(s_status, sizeof s_status, "SENDING...");
-        const bool ok = Lora::sendText(tabProto(s_tab), nick, s_compose, (int8_t)Settings::loraTxDbm());
+        // LORA SETTINGS' NAME, else the squad nickname (include/lora_myname.h).
+        const bool ok = Lora::sendText(tabProto(s_tab), uiLoraMyName(), s_compose, (int8_t)Settings::loraTxDbm());
         snprintf(s_status, sizeof s_status, ok ? "SENT" : "SEND FAILED");
         s_statusAt = now;
         if (ok) { s_composeN = 0; s_compose[0] = '\0'; s_sig = 0xFFFFFFFFu; }

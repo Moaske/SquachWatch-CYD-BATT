@@ -297,3 +297,73 @@ bool sendText(Proto p, const char* name, const char* text, int8_t) {
 
 // LORA CHATS is not in the emulator; the page only asks it for the badge.
 uint16_t uiLoraChatUnread() { return s_cfg.unread; }
+
+// ---- what LORA SETTINGS calls ---------------------------------------------------------
+// The settings themselves are the real src/settings.cpp over the NVS shim;
+// these are the radio's side of the page. The channel list is a made-up one
+// in the same shape as the decoders' (MeshCore's Public built in, a hashtag,
+// a keyed channel, and a Meshtastic preset that has opened frames), and its
+// keys are random-looking bytes, nobody's real secret.
+namespace {
+struct SimChan { Lora::Proto proto; char name[24]; bool builtIn, derived; uint32_t frames; uint8_t key[16]; uint8_t keyLen; };
+std::vector<SimChan> s_chans = {
+    { Lora::Proto::MESHCORE,   "Public",     true,  false, 214, { 0x8b,0x33,0x87,0xe9,0xc5,0xcd,0xea,0x6a,0xc9,0xe5,0xed,0xba,0xa1,0x15,0xcd,0x72 }, 16 },
+    { Lora::Proto::MESHCORE,   "#sasquatch", false, true,   37, { 0 }, 16 },
+    { Lora::Proto::MESHCORE,   "RidgeCrew",  false, false,   9, { 0x3c,0x91,0x0e,0x5d,0x77,0xa2,0x48,0x1f,0xb6,0x2b,0xe0,0x94,0x6c,0xd3,0x05,0x8e }, 16 },
+    { Lora::Proto::MESHTASTIC, "LongFast",   true,  false, 512, { 0xd4,0xf1,0xbb,0x3a,0x20,0x29,0x07,0x59,0xf0,0xbc,0xff,0xab,0xcf,0x4e,0x69,0x01 }, 16 },
+    { Lora::Proto::MESHTASTIC, "Yowie",      false, false,  21, { 0x6a,0x1d,0xf2,0x39,0x80,0x5e,0xc7,0x14,0x9b,0x42,0xe8,0x0d,0x73,0xaf,0x26,0xb1 }, 16 },
+};
+}
+
+namespace Lora {
+
+void applyListen(uint8_t) {}
+void identityChanged() {}
+void clearChats() {}
+void forgetNames() {}
+
+uint8_t channelRowCount() { return (uint8_t)s_chans.size(); }
+bool channelRow(uint8_t i, ChannelRow& out) {
+    if (i >= s_chans.size()) return false;
+    const SimChan& c = s_chans[i];
+    memset(&out, 0, sizeof out);
+    out.proto = c.proto;
+    snprintf(out.name, sizeof out.name, "%s", c.name);
+    out.frames = c.frames; out.lastMs = c.frames ? 1 : 0;
+    out.builtIn = c.builtIn; out.enabled = true; out.derived = c.derived;
+    out.keyBits = (uint16_t)(c.keyLen * 8);
+    return true;
+}
+void channelCapacity(uint8_t& mcUsed, uint8_t& mcMax, uint8_t& mtUsed, uint8_t& mtMax) {
+    mcUsed = mtUsed = 0;
+    for (const SimChan& c : s_chans) if (!c.builtIn) (c.proto == Proto::MESHCORE ? mcUsed : mtUsed)++;
+    mcMax = 24; mtMax = 6;
+}
+bool channelAdd(Proto p, const char* name, const char* key, char* msg, size_t cap) {
+    SimChan c{};
+    c.proto = p;
+    snprintf(c.name, sizeof c.name, "%s", name ? name : "");
+    c.derived = p == Proto::MESHCORE && name && name[0] == '#' && !(key && *key);
+    c.keyLen = 16;
+    for (int k = 0; k < 16; k++) c.key[k] = (uint8_t)(0x5A ^ (k * 37) ^ (key && key[0] ? key[k % strlen(key)] : 0));
+    s_chans.push_back(c);
+    if (msg && cap) snprintf(msg, cap, "ADDED AND STORED");
+    return true;
+}
+bool channelDropRow(uint8_t row) {
+    if (row >= s_chans.size() || s_chans[row].builtIn) return false;
+    s_chans.erase(s_chans.begin() + row);
+    return true;
+}
+void channelKeyPreview(uint8_t row, char* out, size_t cap) {
+    if (!cap) return;
+    out[0] = '\0';
+    if (row >= s_chans.size()) return;
+    const SimChan& c = s_chans[row];
+    if (c.derived) { snprintf(out, cap, "KEY FROM ITS #NAME"); return; }
+    char full[40];
+    for (int k = 0; k < 16; k++) snprintf(full + 2 * k, 3, "%02x", c.key[k]);
+    snprintf(out, cap, "%.4s....%s", full, full + 28);
+}
+
+}  // namespace Lora

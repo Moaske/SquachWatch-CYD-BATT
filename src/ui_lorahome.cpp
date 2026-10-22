@@ -9,6 +9,7 @@
 #if (SQUACH_LORA && defined(TDECK_PLUS)) || SQUACH_LORA_FAKE
 #include "ui_lorahome.h"
 #include "ui_lorachat.h"
+#include "ui_lorasettings.h"
 #include "lora_sniffer.h"
 #include "lora_profiles.h"
 #include "lora_radio.h"
@@ -99,19 +100,25 @@ void drawHeader(TFT_eSPI& t, uint32_t now) {
     // BACK in the top-right corner, away from the compose line's switch: at
     // the bottom it was a thumb's slip from MESHCORE (asked for 2026-10-15).
     small(t, t.width() - 6 - 54, 3, "[ BACK ]", Theme::PURPLE);
-    // Each network's preset, under the title, in its colour: the band's main
-    // one, the first in the table, which is the one the radio listens to and
-    // sends on (LongFast for Meshtastic). It used to keep the last, and read
-    // LongMod on US 915.
+    // LORA SETTINGS in the top-left corner, where the main screen keeps its
+    // settings button and in its look: the three bars, cyan, pink, cyan
+    // (Theme's drawSettingsIcon), drawn small to clear the preset line.
+    t.drawFastHLine(4, 2, 16, Theme::CYAN);
+    t.drawFastHLine(4, 6, 16, Theme::VAPOR_PINK);
+    t.drawFastHLine(4, 10, 16, Theme::CYAN);
+    // Each network's preset, under the title, in its colour: the one the
+    // radio listens to and sends on -- Meshtastic's as chosen on LORA
+    // SETTINGS (LongFast by default), MeshCore's regional one.
     char mt[32] = "", mc[32] = "";
-    for (uint8_t i = 0; i < Lora::profileCount(); i++) {
-        const Lora::Profile& p = Lora::profile(i);
-        if (p.group != Lora::PG_MESH_US && p.group != Lora::PG_MESH_EU) continue;
+    for (int k = 0; k < 2; k++) {
+        const Lora::Proto pr = k ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC;
+        const int16_t i = Lora::meshPresetFind(pr, k ? nullptr : Settings::loraMtPreset());
+        if (i < 0) continue;
+        const Lora::Profile& p = Lora::profile((uint8_t)i);
         char mhz[12], bw[8];
         Lora::formatMHz(p.freqHz, mhz, sizeof mhz);
         Lora::formatBw(p.bwKhz10, bw, sizeof bw);
-        if (p.hint == Lora::Proto::MESHTASTIC && !mt[0]) snprintf(mt, sizeof mt, "MT %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
-        if (p.hint == Lora::Proto::MESHCORE   && !mc[0]) snprintf(mc, sizeof mc, "MC %s SF%u BW%s", mhz, (unsigned)p.sf, bw);
+        snprintf(k ? mc : mt, 32, "%s %s SF%u BW%s", k ? "MC" : "MT", mhz, (unsigned)p.sf, bw);
     }
     if (!mt[0]) strcpy(mt, "MT off");
     if (!mc[0]) strcpy(mc, "MC off");
@@ -914,6 +921,9 @@ LoraHomeHit uiLoraHomeHit(TFT_eSPI& t, int x, int y) {
     // BACK is the top-right corner, with a finger's worth of slack; the bar's
     // right half does nothing, so a slip below the switch goes nowhere.
     if (y < 14 && x >= t.width() - 80) return LoraHomeHit::BACK;
+    // LORA SETTINGS, the icon top-left: a finger's box over it, clear of the
+    // LIVE tag and above the dish.
+    if (y < 22 && x < 50) return LoraHomeHit::SETTINGS;
     // The switch, all of its double height and a little round it.
     if (y >= COMPOSE_Y - 2 && x >= s_switchX - 6) return LoraHomeHit::SWITCH;
     if (y >= BAR_Y - 4) return x < 80 ? LoraHomeHit::CHATS : LoraHomeHit::NONE;
@@ -928,9 +938,8 @@ void uiLoraHomeKey(char c, uint32_t now) {
     if (c == '\n') {
         if (!s_composeN) return;
         if (!Settings::loraTxDbm()) { snprintf(s_status, sizeof s_status, "LORA TX IS OFF: SETTINGS > LORA"); s_statusAt = now; return; }
-        const char* nick = Squachy::nickname();
-        if (!nick || !*nick) nick = "SQUACHY";
-        const bool ok = Lora::sendText(s_net ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC, nick, s_compose, (int8_t)Settings::loraTxDbm());
+        // LORA SETTINGS' NAME, else the squad nickname (include/lora_myname.h).
+        const bool ok = Lora::sendText(s_net ? Lora::Proto::MESHCORE : Lora::Proto::MESHTASTIC, uiLoraMyName(), s_compose, (int8_t)Settings::loraTxDbm());
         snprintf(s_status, sizeof s_status, ok ? "SENT" : "SEND FAILED");
         s_statusAt = now;
         if (ok) { s_composeN = 0; s_compose[0] = '\0'; }

@@ -22,7 +22,7 @@
 #include <stdint.h>
 
 enum class LoraHomeHit : uint8_t { NONE = 0, CHAT_MESHTASTIC, CHAT_MESHCORE, SWITCH, CHATS, BACK,
-                                   TAB_MESHTASTIC, TAB_MESHCORE };
+                                   TAB_MESHTASTIC, TAB_MESHCORE, SETTINGS };
 
 void        uiLoraHomeInit(TFT_eSPI& t);
 void        uiLoraHomeTick(TFT_eSPI& t, uint32_t now);
