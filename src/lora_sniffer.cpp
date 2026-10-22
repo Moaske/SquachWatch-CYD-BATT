@@ -752,6 +752,82 @@ static bool meshProfile(Proto want, uint8_t& idx) {
     return false;
 }
 
+// A default-channel Meshtastic frame from us: the 16-byte header in the clear,
+// Data{portnum, payload} under the published LongFast key. The node number is
+// ours alone, from the MAC. Returns the frame's length; `id` gets its packet id.
+static uint16_t meshtasticFrame(uint8_t port, const uint8_t* payload, size_t plen, uint8_t* f, uint32_t& id) {
+    if (plen > 200) plen = 200;
+    const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
+    id = esp_random();
+    LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
+    LoraCrypto::wr32le(f + 4, from);
+    LoraCrypto::wr32le(f + 8, id);
+    f[12] = 3 | (3 << 5);           // hop limit 3, hop start 3
+    uint8_t key[16];
+    Meshtastic::expandPsk(1, key);
+    f[13] = Meshtastic::channelHash("LongFast", key, 16);
+    f[14] = 0; f[15] = (uint8_t)from;
+    uint8_t* q = f + 16;
+    *q++ = 0x08; *q++ = port; *q++ = 0x12;
+    if (plen < 128) *q++ = (uint8_t)plen;
+    else { *q++ = (uint8_t)((plen & 0x7F) | 0x80); *q++ = (uint8_t)(plen >> 7); }
+    memcpy(q, payload, plen);
+    const uint8_t dlen = (uint8_t)((q - (f + 16)) + plen);
+    Meshtastic::Header h; Meshtastic::parseHeader(f, (uint8_t)(16 + dlen), h);
+    Meshtastic::Channel c; memset(&c, 0, sizeof c); memcpy(c.key, key, 16); c.keyLen = 16;
+    Meshtastic::decrypt(h, c, f + 16, dlen);   // CTR: encrypting is the same operation
+    return (uint16_t)(16 + dlen);
+}
+
+// The sniffer parked, the preset applied, the frame out, and back to whatever
+// the radio was doing.
+static bool transmitOn(const Profile& prof, const uint8_t* f, uint16_t n, int8_t dbm) {
+    const Mode was = s_mode;
+    s_parked = false;
+    setMode(Mode::OFF);
+    for (int k = 0; k < 400 && !s_parked; k++) vTaskDelay(pdMS_TO_TICKS(10));
+    LoraRadio::apply(prof);
+    const bool ok = LoraRadio::transmit(f, (uint8_t)n, dbm);
+    LoraRadio::standby();
+    setMode(was);
+    return ok;
+}
+
+// Our NodeInfo, so a Meshtastic node shows this board by name instead of
+// "!5a5a1234" (2026-10-21: the owner's Meshtastic T-Deck saw only the number).
+// Sent just before the first Meshtastic text after boot and again before a
+// text once three hours have passed -- the rhythm Meshtastic nodes use for
+// their own -- so it goes out only when the owner is already transmitting and
+// never on its own timer. A User message: id "!xxxxxxxx", long name, short
+// name (the first four characters), hardware PRIVATE_HW.
+static uint32_t s_nodeInfoAt = 0;
+static bool     s_nodeInfoSent = false;
+static const uint32_t NODEINFO_EVERY_MS = 3u * 3600u * 1000u;
+
+static void announceIfDue(const Profile& prof, const char* name, int8_t dbm) {
+    const uint32_t now = millis();
+    if (s_nodeInfoSent && now - s_nodeInfoAt < NODEINFO_EVERY_MS) return;
+    const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
+    char idStr[12], shortName[5];
+    snprintf(idStr, sizeof idStr, "!%08lx", (unsigned long)from);
+    size_t ln = strlen(name); if (ln > 39) ln = 39;
+    size_t sn = 0;
+    for (; sn < 4 && name[sn]; sn++) shortName[sn] = name[sn];
+    shortName[sn] = '\0';
+    uint8_t user[80]; size_t u = 0;
+    user[u++] = 0x0A; user[u++] = (uint8_t)strlen(idStr); memcpy(user + u, idStr, strlen(idStr)); u += strlen(idStr);
+    user[u++] = 0x12; user[u++] = (uint8_t)ln;          memcpy(user + u, name, ln);              u += ln;
+    user[u++] = 0x1A; user[u++] = (uint8_t)sn;          memcpy(user + u, shortName, sn);         u += sn;
+    user[u++] = 0x28; user[u++] = 0xFF; user[u++] = 0x01;   // hw_model 255, PRIVATE_HW
+    uint8_t f[256]; uint32_t id = 0;
+    const uint16_t n = meshtasticFrame((uint8_t)Meshtastic::PORT_NODEINFO, user, u, f, id);
+    const bool ok = transmitOn(prof, f, n, dbm);
+    Serial.printf("[lora] announced \"%s\" (%s) to Meshtastic: %s\n", name, shortName, ok ? "ok" : "FAILED");
+    if (ok) { s_nodeInfoSent = true; s_nodeInfoAt = now; }
+    // A breath before the text, so a receiver is back listening.
+    vTaskDelay(pdMS_TO_TICKS(400));
+}
+
 bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
     if (!s_present || !text || !*text || !name) return false;
     uint8_t idx = 0;
@@ -789,43 +865,13 @@ bool sendText(Proto p, const char* name, const char* text, int8_t dbm) {
         MeshCore::GroupText g;
         if (MeshCore::parseGroupText(plain, (uint8_t)plen, g)) key = Lora::Msgs::meshCoreKey(g.sender, g.text, g.timestamp);
     } else if (p == Proto::MESHTASTIC) {
-        // A default-channel text, built the way lora_meshtastic_test builds one:
-        // the 16-byte header in the clear, Data{portnum 1, text} under the
-        // published key. The node number is ours alone, from the MAC.
-        size_t tl = strlen(text);
-        if (tl > 200) tl = 200;
-        const uint32_t from = 0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
-        const uint32_t id = esp_random();
-        key = Lora::Msgs::meshtasticKey(from, id);
-        LoraCrypto::wr32le(f, Meshtastic::BROADCAST);
-        LoraCrypto::wr32le(f + 4, from);
-        LoraCrypto::wr32le(f + 8, id);
-        f[12] = 3 | (3 << 5);           // hop limit 3, hop start 3
-        uint8_t key[16];
-        Meshtastic::expandPsk(1, key);
-        f[13] = Meshtastic::channelHash("LongFast", key, 16);
-        f[14] = 0; f[15] = (uint8_t)from;
-        uint8_t* q = f + 16;
-        *q++ = 0x08; *q++ = 0x01; *q++ = 0x12;
-        if (tl < 128) *q++ = (uint8_t)tl;
-        else { *q++ = (uint8_t)((tl & 0x7F) | 0x80); *q++ = (uint8_t)(tl >> 7); }
-        memcpy(q, text, tl);
-        const uint8_t dlen = (uint8_t)((q - (f + 16)) + tl);
-        Meshtastic::Header h; Meshtastic::parseHeader(f, (uint8_t)(16 + dlen), h);
-        Meshtastic::Channel c; memset(&c, 0, sizeof c); memcpy(c.key, key, 16); c.keyLen = 16;
-        Meshtastic::decrypt(h, c, f + 16, dlen);   // CTR: encrypting is the same operation
-        n = (uint16_t)(16 + dlen);
+        // A default-channel text, built the way lora_meshtastic_test builds one.
+        uint32_t id = 0;
+        n = meshtasticFrame((uint8_t)Meshtastic::PORT_TEXT, (const uint8_t*)text, strlen(text), f, id);
+        key = Lora::Msgs::meshtasticKey(0x5A5A0000u | (uint32_t)(ESP.getEfuseMac() & 0xFFFF), id);
+        announceIfDue(prof, name, dbm);
     } else return false;
-    // The sniffer parked, the preset applied, the frame out, and back to
-    // whatever the radio was doing.
-    const Mode was = s_mode;
-    s_parked = false;
-    setMode(Mode::OFF);
-    for (int k = 0; k < 400 && !s_parked; k++) vTaskDelay(pdMS_TO_TICKS(10));
-    LoraRadio::apply(prof);
-    const bool ok = LoraRadio::transmit(f, (uint8_t)n, dbm);
-    LoraRadio::standby();
-    setMode(was);
+    const bool ok = transmitOn(prof, f, n, dbm);
     Serial.printf("[lora] sent \"%s\" on %s at %d dBm: %s\n", text, prof.name, (int)dbm, ok ? "ok" : "FAILED");
     if (ok) {
         // Our own copy in the ring, so the chat shows what went out.
