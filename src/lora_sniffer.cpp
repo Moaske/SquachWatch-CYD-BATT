@@ -25,7 +25,9 @@
 #include "lora_enrich.h"
 #include "lora_feed.h"
 #include "lora_ident.h"
+#include "lora_names.h"
 #include "clock.h"
+#include <Preferences.h>
 #include "settings.h"
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -464,8 +466,57 @@ void task(void*) {
 
 }
 
+// ---- remembered Meshtastic names (Lora::Names) -------------------------------
+// A chat that reads "!3b1c9a2e" after every restart until each node happens to
+// send its NodeInfo again (every few hours) is a chat nobody can follow. The
+// names come back from flash at boot; a changed set is written back at most
+// every five minutes, and not in the first minute after boot, so a node table
+// filling up after a restart costs one write, not one per NodeInfo. The PIN
+// lock's duress wipe erases the whole NVS partition, these with it.
+static const char*    NAMES_NS = "loranames";
+static uint32_t       s_namesSavedAt = 0;
+
+static void namesRestore() {
+    Preferences p;
+    if (!p.begin(NAMES_NS, true)) return;               // nothing saved yet
+    const size_t len = p.getBytesLength("v1");
+    if (len) {
+        uint8_t* buf = (uint8_t*)malloc(len);
+        if (buf) {
+            if (p.getBytes("v1", buf, len) == len) Names::load(buf, len);
+            free(buf);
+        }
+    }
+    p.end();
+    if (Names::count()) Serial.printf("[lora] %u Meshtastic names remembered\n", (unsigned)Names::count());
+}
+
+static void namesSave(uint32_t now) {
+    if (!Names::dirty() || now < 60000u) return;
+    if (s_namesSavedAt && now - s_namesSavedAt < 300000u) return;
+    const size_t cap = Names::bytesNeeded();
+    uint8_t* buf = (uint8_t*)malloc(cap);
+    if (!buf) return;
+    size_t n = 0;
+    // NodeInfos are learned on the radio task inside this lock.
+    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(20)) == pdTRUE) {
+        n = Names::save(buf, cap);
+        if (n) Names::markSaved();
+        xSemaphoreGive(s_lock);
+    }
+    if (n) {
+        Preferences p;
+        if (p.begin(NAMES_NS, false)) { p.putBytes("v1", buf, n); p.end(); }
+        s_namesSavedAt = now;
+    }
+    free(buf);
+}
+
 bool begin() {
     s_lock = xSemaphoreCreateMutex();
+    // Before the radio, like the channel keys below: the names are the
+    // decoders', and the radio task is not running yet to race this.
+    namesRestore();
     memset(&s_stats, 0, sizeof s_stats);
     // The request log exists before the first request can be issued, which is
     // the point of it: an empty log is a claim the owner can check.
@@ -631,6 +682,7 @@ static void enrichScan(uint32_t now) {
 
 void tick(uint32_t now) {
     if (!s_present) return;
+    namesSave(now);
     enrichScan(now);
     // Starts a short-lived worker when there is something to ask and WiFi is
     // already up for another reason; does nothing at all otherwise.

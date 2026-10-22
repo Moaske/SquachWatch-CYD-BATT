@@ -108,6 +108,18 @@ void note(Proto p, uint8_t chan, uint8_t port, const char* sender, uint64_t send
     s_st->total++;
 }
 
+uint16_t renameSender(Proto p, uint64_t senderId, const char* sender) {
+    if (!s_st || !sender || !sender[0]) return 0;
+    uint16_t n = 0;
+    for (uint16_t i = 0; i < s_st->held; i++) {
+        Msg& m = s_st->m[newest(i)];
+        if (m.proto != p || m.senderId != senderId || !strcmp(m.sender, sender)) continue;
+        put(m.sender, sizeof m.sender, sender);
+        n++;
+    }
+    return n;
+}
+
 uint16_t count()   { return s_st ? s_st->held : 0; }
 uint32_t total()   { return s_st ? s_st->total : 0; }
 uint32_t dropped() { return s_st ? s_st->dropped : 0; }

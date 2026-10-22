@@ -124,6 +124,11 @@ uint32_t meshtasticKey(uint32_t from, uint32_t packetId);
 uint32_t meshCoreKey(const char* sender, const char* text, uint32_t timestamp);
 static const uint32_t SEEN_MS = 10u * 60u * 1000u;
 
+// A sender's name learned after its messages arrived (a Meshtastic NodeInfo
+// comes every few hours): every held message from that network and sender id
+// takes the new name. Returns how many rows changed.
+uint16_t renameSender(Proto p, uint64_t senderId, const char* sender);
+
 // How many are held in total, and how many have been pushed out since boot.
 uint16_t count();
 uint32_t total();
