@@ -151,6 +151,12 @@ void uiAlertSetNight(bool night) { s_night = night; }
 void uiAlertSetLastFree(bool lastFree) { s_lastFree = lastFree; }
 static bool     s_spam      = false;
 static uint16_t s_spamFakes = 0;
+static const char* s_snzLabel = nullptr;
+static uint16_t    s_snzLeft  = 0;
+void uiAlertSetSnoozePick(const char* label, uint16_t left) {
+    s_snzLabel = label;
+    s_snzLeft  = left > 1000 ? 1000 : left;
+}
 void uiAlertSetSpam(bool spam, uint16_t fakes) { s_spam = spam; s_spamFakes = fakes; }
 #if defined(CYD_GPS)
 static bool    s_place = false, s_placeFake = false;
@@ -166,6 +172,7 @@ void uiAlertInit(TFT_eSPI& t, const Detection& d) {
     s_night = false;
     s_lastFree = false;
     s_spam     = false;
+    s_snzLabel = nullptr;
 #if defined(CYD_GPS)
     s_place    = false;   // a card never shows an earlier alert's place
 #endif
@@ -722,11 +729,20 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         t.setCursor(bx + (bw - hw) / 2, by + (bh - t.fontHeight()) / 2);
         t.print("HUNT");
     }
-    // SNOOZE between the two: this device, quiet until the board restarts.
+    // SNOOZE between the two: this device, quiet for a while. Each tap
+    // steps the time up (main.cpp owns the steps); while one is being
+    // picked the button stays pushed in and wears it, and a line along its
+    // foot runs out as the pick locks in.
     {
         int bx, by, bw, bh;
         snoozeBtnRect(w, h, bx, by, bw, bh);
-        Theme::drawButton(t, bx, by, bw, bh, "SNOOZE", false);
+        Theme::drawButton(t, bx, by, bw, bh, s_snzLabel ? s_snzLabel : "SNOOZE",
+                          s_snzLabel != nullptr);
+        if (s_snzLabel) {
+            const int barW = (int)((int32_t)(bw - 6) * s_snzLeft / 1000);
+            t.fillRect(bx + 3, by + bh - 4, bw - 6, 2, Theme::BG);
+            if (barW > 0) t.fillRect(bx + 3, by + bh - 4, barW, 2, Theme::AMBER);
+        }
     }
 
     // TV-static snow over the whole screen during the same random burst

@@ -192,7 +192,7 @@ void clear() {
     s_snzN = 0;
 }
 
-// ---- SNOOZE: 10/30/60 minutes or persistent ALWAYS ----
+// ---- SNOOZE: 10/30 minutes, 1/4 hours, or persistent ALWAYS ----
 bool snoozed(const uint8_t* mac) {
     begin();
     pruneSnoozes();
@@ -223,7 +223,8 @@ bool snooze(const uint8_t* mac, SnoozeDuration duration) {
     const uint32_t durationMs =
         duration == SnoozeDuration::MIN_10 ? 600000UL :
         duration == SnoozeDuration::MIN_30 ? 1800000UL :
-        duration == SnoozeDuration::HOUR_1 ? 3600000UL : 0;
+        duration == SnoozeDuration::HOUR_1 ? 3600000UL :
+        duration == SnoozeDuration::HOUR_4 ? 14400000UL : 0;
     const SnoozeRec previous = old < 0 ? SnoozeRec{} : s_snz[old];
     SnoozeRec& entry = old >= 0 ? s_snz[old] : s_snz[s_snzN++];
     memcpy(entry.mac, mac, 6);

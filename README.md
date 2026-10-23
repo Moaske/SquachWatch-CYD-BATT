@@ -282,7 +282,7 @@ the screen.
 | Control | Where | What it does |
 |---|---|---|
 | **IGNORE** | The alert card, or a LOG row | That one device never raises an alert again, and its LOG row wears an IGNORED tag. UN-IGNORE undoes it; Settings → IGNORED lists them all |
-| **SNOOZE** | The alert card | The same, until the board restarts |
+| **SNOOZE** | The alert card | The same, for a while: each tap steps it up (10 min, 30 min, 1 hour, 4 hours), and it locks in two seconds after the last tap |
 | **AUTO SNOOZE** | Settings: OFF, AFTER 5, AFTER 10 | After that many alerts a device has to come 7 dB closer than it ever has before it may interrupt again. Its allowance comes back after half an hour |
 | **ALERT FILTER** | Settings: ALL, MED+, HIGH ONLY | The lowest confidence allowed to take over the screen |
 | **TYPE FILTER** | Settings | Whole detection types on or off. An off type is dropped, not logged |

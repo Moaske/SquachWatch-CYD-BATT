@@ -172,7 +172,7 @@ The buttons:
 
 - **MORE INFO**: what this thing is and why it matched.
 - **IGNORE**: never alert on this exact device again. It's still logged and counted, with an IGNORED tag on its LOG row. Tap it again (it reads MUTED) or use Settings > IGNORED to undo it.
-- **SNOOZE**: quiet about this device until the board restarts.
+- **SNOOZE**: quiet about this device for a while. Tap once for 10 minutes, twice for 30, three times for an hour, four times for 4 hours. The button shows the time, and it locks in two seconds after your last tap. For good, use IGNORE.
 - **HUNT**: a hot/cold fox hunt for that device, GETTING WARMER or GETTING COLDER as you move. STOP HUNT ends it.
 
 **Too many alerts?**

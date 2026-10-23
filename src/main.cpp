@@ -2233,7 +2233,22 @@ static void squachyCatch(DetectionType type, const uint8_t* mac, uint32_t hits, 
 enum class Buzz : uint8_t { ALERT, WATCH, SAMPLE, MESSAGE };
 static void twatchBuzz(Buzz kind);
 #endif
+// SNOOZE on the alert card: each tap steps through these, and the pick
+// locks in SNOOZE_PICK_MS after the last tap. 0 = not picking.
+struct SnoozeStep { IgnoreList::SnoozeDuration dur; const char* label; const char* toast; };
+static const SnoozeStep SNOOZE_STEP[] = {
+    { IgnoreList::SnoozeDuration::MIN_10, "10 MIN",  "for 10 min"  },
+    { IgnoreList::SnoozeDuration::MIN_30, "30 MIN",  "for 30 min"  },
+    { IgnoreList::SnoozeDuration::HOUR_1, "1 HOUR",  "for an hour" },
+    { IgnoreList::SnoozeDuration::HOUR_4, "4 HOURS", "for 4 hours" },
+};
+static const uint8_t  SNOOZE_STEPS   = sizeof SNOOZE_STEP / sizeof SNOOZE_STEP[0];
+static const uint32_t SNOOZE_PICK_MS = 2000;
+static uint8_t  s_snoozeStep  = 0;
+static uint32_t s_snoozeTapAt = 0;
+
 static void enterAlert(const Detection& d) {
+    s_snoozeStep = 0;
     s_backToDesk = (state == AppState::DESK);
 #if SQUACH_LORA && defined(TDECK_PLUS)
     s_backToLora = onLoraPage() ? state : AppState::CLEAR;
@@ -7285,6 +7300,30 @@ void loop() {
                 }
                 break;
             }
+            // A SNOOZE time being tapped through. It locks in when the taps
+            // stop, or straight away on a tap anywhere but SNOOZE: whatever
+            // the button shows when you look away is what you get.
+            if (s_snoozeStep) {
+                const uint32_t since = now - s_snoozeTapAt;
+                const bool otherTap = tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS &&
+                                      !uiAlertHitSnooze(tp.x, tp.y, tft.width(), tft.height());
+                if (since >= SNOOZE_PICK_MS || otherTap) {
+                    const SnoozeStep& st = SNOOZE_STEP[s_snoozeStep - 1];
+                    char sub[28];
+                    if (IgnoreList::snooze(s_alertMac, st.dur))
+                        snprintf(sub, sizeof sub, "This one, %s", st.toast);
+                    else
+                        snprintf(sub, sizeof sub, "Snooze list full");
+                    s_snoozeStep = 0;
+                    lastTouch = now;
+                    Theme::showToast("SNOOZED", sub, Theme::AMBER);
+                    squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
+                    enterClear();
+                    break;
+                }
+                uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label,
+                                     (uint16_t)(1000 - since * 1000 / SNOOZE_PICK_MS));
+            }
             if (tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS) {
                 lastTouch = now;
                 if (uiAlertHitMoreInfo(tp.x, tp.y, tft.width(), tft.height())) {
@@ -7306,16 +7345,19 @@ void loop() {
                     squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                     enterClear();
                 } else if (uiAlertHitSnooze(tp.x, tp.y, tft.width(), tft.height())) {
-                    // This device, until the board restarts: no more alerts
-                    // from it, while it goes on being scanned, counted and
-                    // logged like anything IGNOREd. Acknowledges the alert
-                    // like IGNORE does. See IgnoreList::snooze for why it
-                    // is no longer the whole type for an hour.
+                    // This device, for a while: no more alerts from it,
+                    // while it goes on being scanned, counted and logged like
+                    // anything IGNOREd. Each tap steps the time up (10 MIN,
+                    // 30 MIN, 1 HOUR, 4 HOURS, round again) and the card
+                    // stays up; SNOOZE_PICK_MS after the last tap the pick
+                    // locks in (above). No ALWAYS step: IGNORE is already
+                    // the forever button, and unlike a hidden always-snooze
+                    // it can be seen and undone from its list.
                     lastTouch = now;
-                    IgnoreList::snooze(s_alertMac);
-                    Theme::showToast("SNOOZED", "This one, until restart", Theme::AMBER);
-                    squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
-                    enterClear();
+                    s_snoozeStep  = (uint8_t)(s_snoozeStep % SNOOZE_STEPS + 1);
+                    s_snoozeTapAt = now;
+                    s_alertArmed  = false;   // the next step needs a fresh tap, not a held finger
+                    uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label, 1000);
                 } else if (uiAlertHitHunt(tp.x, tp.y, tft.width(), tft.height())) {
                     // Same call pair LOG's confirm panel makes. The
                     // DETECTION trigger fires here too: leaving via HUNT
@@ -7332,7 +7374,7 @@ void loop() {
                     squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                     enterClear();
                 }
-            } else if ((now - alertStart) > ALERT_AUTO_DISMISS_MS) {
+            } else if ((now - alertStart) > ALERT_AUTO_DISMISS_MS && !s_snoozeStep) {
                 squachyCatch(lastAlertType, s_alertMac, lastAlertHits, lastAlertRssi, lastAlertConf);
                 enterClear();
             }

@@ -51,9 +51,12 @@ namespace IgnoreList {
 
     void clear();
 
-    // Timed snoozes expire after 10, 30, or 60 minutes; ALWAYS survives restart.
-    // Detection and logging remain active. Only full-screen alerts are suppressed.
-    enum class SnoozeDuration : uint8_t { MIN_10, MIN_30, HOUR_1, ALWAYS };
+    // Timed snoozes expire after 10 or 30 minutes, 1 or 4 hours; ALWAYS
+    // survives restart. Detection and logging remain active. Only
+    // full-screen alerts are suppressed. The enum's numbers are never
+    // stored (a saved snooze is just its MAC and the ALWAYS flag), so a
+    // step can be added anywhere in the list.
+    enum class SnoozeDuration : uint8_t { MIN_10, MIN_30, HOUR_1, HOUR_4, ALWAYS };
     static const uint8_t SNOOZE_MAX = 32;
     bool snooze(const uint8_t* mac, SnoozeDuration duration);
     void snooze(const uint8_t* mac);
