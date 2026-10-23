@@ -7300,14 +7300,26 @@ void loop() {
                 }
                 break;
             }
-            // A SNOOZE time being tapped through. It locks in when the taps
-            // stop, or straight away on a tap anywhere but SNOOZE: whatever
-            // the button shows when you look away is what you get.
+            // A SNOOZE time being tapped through. Once picking has started
+            // the whole card is the SNOOZE button: a tap anywhere is the next
+            // step. A second tap that lands a few pixels off the button used
+            // to count as "somewhere else", lock the pick in and close the
+            // card (seen on the 3.5in, 2026-10-22). It locks in only when the
+            // taps stop: whatever the button shows then is what you get.
             if (s_snoozeStep) {
                 const uint32_t since = now - s_snoozeTapAt;
-                const bool otherTap = tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS &&
-                                      !uiAlertHitSnooze(tp.x, tp.y, tft.width(), tft.height());
-                if (since >= SNOOZE_PICK_MS || otherTap) {
+                if (tp.valid && (now - lastTouch) > TOUCH_DEBOUNCE_MS) {
+                    Serial.printf("[snooze] tap %d,%d after %u ms -> step %u\n", tp.x, tp.y,
+                                  (unsigned)since, (unsigned)(s_snoozeStep % SNOOZE_STEPS + 1));
+                    lastTouch     = now;
+                    s_snoozeStep  = (uint8_t)(s_snoozeStep % SNOOZE_STEPS + 1);
+                    s_snoozeTapAt = now;
+                    s_alertArmed  = false;
+                    uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label, 1000);
+                    break;
+                }
+                if (since >= SNOOZE_PICK_MS) {
+                    Serial.printf("[snooze] locked step %u\n", (unsigned)s_snoozeStep);
                     const SnoozeStep& st = SNOOZE_STEP[s_snoozeStep - 1];
                     char sub[28];
                     if (IgnoreList::snooze(s_alertMac, st.dur))
@@ -7356,6 +7368,7 @@ void loop() {
                     lastTouch = now;
                     s_snoozeStep  = (uint8_t)(s_snoozeStep % SNOOZE_STEPS + 1);
                     s_snoozeTapAt = now;
+                    Serial.printf("[snooze] first tap %d,%d -> step %u\n", tp.x, tp.y, (unsigned)s_snoozeStep);
                     s_alertArmed  = false;   // the next step needs a fresh tap, not a held finger
                     uiAlertSetSnoozePick(SNOOZE_STEP[s_snoozeStep - 1].label, 1000);
                 } else if (uiAlertHitHunt(tp.x, tp.y, tft.width(), tft.height())) {
