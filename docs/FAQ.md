@@ -40,6 +40,7 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | Board | Touch | On the flasher | Good to know |
 |---|---|---|---|
 | 2.8" CYD, ST7789 (ESP32-2432S028R) | Resistive | Yes | The usual screen. The 80 MHz box is ticked by default. |
+| DIYmalls 2.8" (JC2432W328C) | Capacitive | Yes | Named flasher option; shares the ST7789 `cyd` / `cyd-fast` firmware, which detects touch at startup. [Hardware and battery notes](DIYMALLS-28.md). |
 | 2.8" CYD, ILI9341 (ESP32-2432S028R) | Resistive | Yes | The older screen on the same board. Also the build for the ESP32-32E 2.8" (E32R28T). Leave 80 MHz unticked. |
 | 3.2" resistive (Freenove FNK0103) | Resistive | Yes | |
 | 3.2" capacitive (ESP32-2432S032C) | Capacitive | Yes (NEW) | Already runs at 80 MHz. |
@@ -55,7 +56,7 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | LilyGo T-Watch S3 / S3 Plus | Capacitive | BETA | On your wrist. Battery, buzz, LoRa listening; the S3 Plus adds GPS. |
 | M5Stack Tab5 | Capacitive | Test builds only (`?lab=1`) | Experimental. A 5" tablet whose radio is a separate chip that needs our firmware first. Notes in [TAB5.md](TAB5.md). |
 
-Not sure which one you've got? The code on the back (like ESP32-2432S028R) tells you. The last letter is the touch: R is resistive (press), C is capacitive (tap). Type it into the flasher's box and it picks the build for you.
+Not sure which one you've got? Type the code on the back into the flasher's box. `JC2432W328C` selects the named DIYmalls option; `ESP32-2432S028R` selects the original CYD entry. For that CYD family, the last letter is the touch: R is resistive (press), C is capacitive (tap).
 
 BETA means it runs the whole firmware but has had less time on real hardware than the 2.8". It works; it just hasn't earned the right to be boring yet.
 
@@ -144,6 +145,8 @@ Be honest with yourself about what the PIN does: it stops a snoop who picks the 
 **The speaker.** The Freenove ESP32-S3 2.8" and 3.5" have one. SOUND in Settings is OFF (the default), ALERTS (a device you've never seen, a watch-list hit, a low battery) or ALL (those plus a squad message, a visitor, throws and landings, C1iPPY, the toaster and the lamp noticing the cable). VOLUME is 0-100% on its - and + buttons; each press plays a sample. Nothing plays while the screen is dimmed or at night (11 pm to 5 am), except a watch-list hit.
 
 **The battery lamp.** On the Freenove ESP32-S3 2.8" and 3.5" and the T-Watch, a little lava lamp under the menu button is the battery: the lava is the charge. On the cable, bubbles stream up and a rainbow runs through the cap and base; under 10% it flickers. The Freenove boards work out the cable from the battery voltage jumping when you plug in, so it can take a few seconds to notice. Boards with no battery don't show a lamp.
+
+The DIYmalls JC2432W328C has a physical BAT connector and battery switch, but the board's battery-sensing circuit and charger have not been verified. SquachWatch does not show a battery percentage for it, and USB power must not be taken as evidence that USB charging is supported. See the [JC2432W328C hardware guide](DIYMALLS-28.md) before connecting a battery.
 
 **On the T-Watch:**
 

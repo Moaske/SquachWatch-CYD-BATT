@@ -780,7 +780,7 @@
       </p>
     </div>
     <ul class="board-help">
-      <li><strong>Cheap Yellow Displays</strong> have a code like <strong>ESP32-2432S028R</strong> on the back. The last letter is the touch: <strong>R</strong> resistive (press), <strong>C</strong> capacitive (tap).</li>
+      <li><strong>Cheap Yellow Displays</strong> have a code like <strong>ESP32-2432S028R</strong> on the back. The last letter is the touch: <strong>R</strong> resistive (press), <strong>C</strong> capacitive (tap). Enter <strong>JC2432W328C</strong> to select the named DIYmalls option.</li>
       <li><strong>Freenove</strong> boards say <strong>FNK0103</strong> or <strong>FNK0104</strong>.</li>
       <li>Not on the list? Tell us what it is on <a href="https://github.com/skizzophrenic/SquachWatch-CYD/issues" target="_blank" rel="noopener">GitHub</a>.</li>
     </ul>
@@ -794,7 +794,8 @@
     <label class="board-picker-label" for="boardSelect">Or pick from the list:</label>
     <select class="board-select" id="boardSelect" aria-label="Board select">
       <optgroup label="CHEAP YELLOW DISPLAYS (CYD)">
-      <option value="./manifest-cyd.json" data-cyd28="1" data-fast="./manifest-cyd-fast.json" data-fastdefault="1" selected>2.8&quot; CYD &middot; ST7789 &mdash; ESP32-2432S028R, the usual screen</option>
+      <option value="./manifest-cyd.json" data-board-id="cyd-st7789" data-cyd28="1" data-fast="./manifest-cyd-fast.json" data-fastdefault="1" selected>2.8&quot; CYD &middot; ST7789 &mdash; ESP32-2432S028R, the usual screen</option>
+      <option value="./manifest-cyd.json" data-board-id="diymalls-jc2432w328c" data-fast="./manifest-cyd-fast.json" data-fastdefault="1">DIYmalls 2.8&quot; &mdash; JC2432W328C (Capacitive)</option>
       <option value="./manifest-cyd-ili9341.json" data-cyd28="1" data-fast="./manifest-cyd-ili9341-fast.json" data-ocdesc="This screen usually can’t keep up at 80 MHz. Leave it unticked unless you want to try your luck.">2.8&quot; CYD &middot; ILI9341 &mdash; ESP32-2432S028R, older screen</option>
       <option value="./manifest-freenove32.json">3.2&quot; &middot; resistive &mdash; Freenove FNK0103</option>
       <option value="./manifest-cyd32c.json" data-ocnote="The 3.2&quot; capacitive already ships at 80MHz.">3.2&quot; &middot; capacitive &mdash; ESP32-2432S032C (NEW)</option>
@@ -1806,6 +1807,7 @@
     var codeIn = document.getElementById('boardCode');
     var codeOut = document.getElementById('boardCodeAnswer');
     var CODES = [
+      { re: /JC2432W328C/,           boardId: 'diymalls-jc2432w328c',   say: 'That’s the DIYmalls 2.8" (JC2432W328C), with capacitive touch. Selected its ST7789 build.' },
       { re: /2432S028/,             v: './manifest-cyd.json',         say: 'That’s the 2.8" CYD. If the screen goes white, untick 80 MHz first; still white, pick the ILI9341 one.' },
       { re: /E32R28|32E.*240X320|32E.*2\.8|2\.8.*32E/, v: './manifest-cyd-ili9341.json', say: 'That’s the ESP32-32E 2.8" (E32R28T): the 2.8" CYD’s ILI9341 build. Selected below; leave the overclock box unticked.' },
       { re: /E32R35|32E.*320X480|32E.*3\.5|3\.5.*32E/, v: './manifest-cyd35-fast.json', say: 'That’s the ESP32-32E 3.5" (E32R35T), the 3.5" resistive (BETA). Selected below.' },
@@ -1832,7 +1834,18 @@
       if (v.length < 4) { codeOut.textContent = ''; return; }
       for (var i = 0; i < CODES.length; i++) {
         if (!CODES[i].re.test(v)) continue;
-        if (CODES[i].v) { select.value = CODES[i].v; applySelection('board'); }
+        if (CODES[i].boardId) {
+          // Two named boards may intentionally share one firmware manifest.
+          // Select by option identity so this lookup does not fall back to
+          // the first option with the same value (the generic CYD entry).
+          for (var j = 0; j < select.options.length; j++) {
+            if (select.options[j].dataset.boardId === CODES[i].boardId) {
+              select.selectedIndex = j;
+              applySelection('board');
+              break;
+            }
+          }
+        } else if (CODES[i].v) { select.value = CODES[i].v; applySelection('board'); }
         else codeOut.className = 'board-code-answer warn';
         codeOut.textContent = CODES[i].say;
         return;
@@ -2250,6 +2263,7 @@
       var row = document.createElement('div');
       row.className = 'tile-row';
       byLabel[label].forEach(function (o) {
+        var optionIndex = Array.prototype.indexOf.call(select.options, o);
         var p = parts(o.textContent);
         if (lab) {
           // "LAB Small-Screens -- SquachWatch-CYD (M5Stack StickS3)  (lab-small-screens)"
@@ -2265,12 +2279,13 @@
         b.className = 'tile' + (lab ? ' lab' : '');
         b.setAttribute('role', 'radio');
         b.dataset.value = o.value;
+        b.dataset.optionIndex = String(optionIndex);
         var n = document.createElement('span'); n.className = 'tile-name'; n.textContent = p.name; b.appendChild(n);
         if (p.code) { var c = document.createElement('span'); c.className = 'tile-code'; c.textContent = p.code; b.appendChild(c); }
         if (p.tag) { var g = document.createElement('span'); g.className = 'tile-tag ' + p.tag.toLowerCase(); g.textContent = p.tag; b.appendChild(g); }
         b.addEventListener('click', function () {
-          if (select.value === o.value) return;
-          select.value = o.value;
+          if (select.selectedIndex === optionIndex) return;
+          select.selectedIndex = optionIndex;
           select.dispatchEvent(new Event('change'));
           sync();
         });
@@ -2283,9 +2298,9 @@
 
   var last = null;
   function sync() {
-    last = select.value;
+    last = select.selectedIndex;
     Array.prototype.forEach.call(host.querySelectorAll('.tile'), function (b) {
-      b.setAttribute('aria-checked', b.dataset.value === select.value ? 'true' : 'false');
+      b.setAttribute('aria-checked', Number(b.dataset.optionIndex) === select.selectedIndex ? 'true' : 'false');
     });
     var o = select.options[select.selectedIndex];
     if (picked) picked.textContent = o ? ('Installing for: ' + parts(o.textContent).name) : '';
@@ -2295,7 +2310,7 @@
   // Lab builds arrive later, from a fetch; the code box changes the select
   // without an event. One cheap look a third of a second covers both.
   new MutationObserver(render).observe(select, { childList: true, subtree: true });
-  setInterval(function () { if (select.value !== last) sync(); }, 300);
+  setInterval(function () { if (select.selectedIndex !== last) sync(); }, 300);
 })();
 </script>
 </body>

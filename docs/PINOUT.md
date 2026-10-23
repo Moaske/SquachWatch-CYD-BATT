@@ -41,6 +41,60 @@ selects between them via their respective `CS` lines. The SD card
 is optional — if no card is inserted at boot, the firmware just
 skips SD logging and everything else works.
 
+## DIYmalls 2.8" — JC2432W328C
+
+The JC2432W328C uses the shared `cyd` / `cyd-fast` firmware, but its
+touchscreen and backlight wiring differ from the original resistive CYD.
+The display pins are the ST7789 CYD pins above; the touchscreen and
+backlight below are the JC2432W328C assignments used by the firmware. See
+[the board guide](DIYMALLS-28.md) for support and battery limitations.
+
+### Capacitive touch — CST816/CST820 family, I²C
+
+| Signal | GPIO / value |
+|---|---:|
+| SDA | 33 |
+| SCL | 32 |
+| Reset | 25 |
+| I²C address | `0x15` |
+| Interrupt | Not used by firmware |
+
+At startup, `cyd` and `cyd-fast` probe this I²C address. An answering
+controller selects capacitive touch; otherwise the firmware initializes the
+original CYD's XPT2046 resistive touchscreen on its separate SPI bus.
+
+### Backlight
+
+| Signal | GPIO |
+|---|---:|
+| Backlight, active-high PWM | 27 |
+
+This replaces GPIO21 for the JC2432W328C only. The original CYD continues to
+use GPIO21.
+
+### microSD
+
+The shared CYD firmware configures its SD card on the classic CYD's separate
+SPI bus: SCK 18, MISO 19, MOSI 23, CS 5. The board has a microSD slot, but
+mounting/logging on all JC2432W328C revisions still needs physical
+verification.
+
+### Battery, USB and other connectors
+
+The board has a two-pin 1.25 mm BAT connector and a dedicated battery power
+switch. The connector polarity and any battery-sense connection have not
+been established from a JC2432W328C schematic or measurement. Do not copy the
+Freenove S3 battery divider on GPIO9: GPIO6–11 are reserved for flash on this
+classic ESP32. There is no JC2432W328C battery monitor in the current
+firmware, and USB charging is not verified. A protected 1S LiPo only adds
+cell protection; that is not evidence that the board provides compatible
+charge management. Details are in [DIYMALLS-28.md](DIYMALLS-28.md).
+
+The USB-C connector provides the board's USB/data connection and 5 V input.
+The board also has a two-pin speaker connector, but its mapping and electrical
+requirements have not been verified for this model; the shared CYD firmware
+does not drive it.
+
 ## Spare GPIOs
 
 The spare pins on the connectors are GPIO 22 and 35. GPIO 27 on CN1 is
