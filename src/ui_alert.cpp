@@ -742,6 +742,24 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
             const int barW = (int)((int32_t)(bw - 6) * s_snzLeft / 1000);
             t.fillRect(bx + 3, by + bh - 4, bw - 6, 2, Theme::BG);
             if (barW > 0) t.fillRect(bx + 3, by + bh - 4, barW, 2, Theme::AMBER);
+            // Nothing else on the card says the button counts taps, so once
+            // the first one has landed it says so itself, just above.
+            // Asked for 2026-10-22: "no way to realize you have to multi tap".
+            static const char* HINT = "TAP AGAIN: LONGER";
+            t.setTextFont(wideAlert(w) ? 2 : 1);
+            t.setTextSize(1);
+            t.setTextWrap(false);
+            const int hw = t.textWidth(HINT);
+            const int fh = t.fontHeight();
+            const int hx = (w - hw) / 2;
+            // The large panel has 18 rows between the radar's frame and the
+            // button for a 16-row font, so it sits tight against the button.
+            const int hy = by - fh - (wideAlert(w) ? 1 : 5);
+            t.fillRect(hx - 3, hy - 1, hw + 6, fh + 1, Theme::BG);
+            t.setTextColor(Theme::AMBER, Theme::BG);
+            t.setCursor(hx, hy);
+            t.print(HINT);
+            t.setTextFont(1);
         }
     }
 

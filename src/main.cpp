@@ -2243,7 +2243,7 @@ static const SnoozeStep SNOOZE_STEP[] = {
     { IgnoreList::SnoozeDuration::HOUR_4, "4 HOURS", "for 4 hours" },
 };
 static const uint8_t  SNOOZE_STEPS   = sizeof SNOOZE_STEP / sizeof SNOOZE_STEP[0];
-static const uint32_t SNOOZE_PICK_MS = 2000;
+static const uint32_t SNOOZE_PICK_MS = 3000;
 static uint8_t  s_snoozeStep  = 0;
 static uint32_t s_snoozeTapAt = 0;
 
