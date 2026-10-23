@@ -807,7 +807,7 @@
       <option value="./manifest-rlphantom-r.json">RL Phantom 2.4&quot; &mdash; ESP32-2432S024R</option>
       </optgroup>
       <optgroup label="ESP32-S3 BOARDS">
-      <option value="./manifest-freenove-s3.json">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
+      <option value="./manifest-freenove-s3-40mhz.json" data-fast="./manifest-freenove-s3.json" data-fastdefault="1" data-ocdesc="On by default for this board. If the screen shows torn or jumbled lines, untick it for the 40 MHz build and flash again.">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
       <option value="./manifest-freenove-s3-35.json">Freenove ESP32-S3 3.5&quot; &mdash; FNK0104N (BETA)</option>
       <option value="./manifest-crowpanel7.json">Elecrow CrowPanel 7&quot; &mdash; CrowPanel Advance 7.0 (BETA)</option>
       <option value="./manifest-tdeck-plus.json" data-ocnote="The T-Deck's screen runs at 40MHz; there is no other build.">LilyGo T-Deck Plus &mdash; ESP32-S3, keyboard + GPS (BETA)</option>
@@ -1820,7 +1820,7 @@
       { re: /2432S024C/,            v: null,                          say: 'The capacitive 2.4" isn’t on the flasher yet.' },
       { re: /AWOK|MARAUDER/,        v: './manifest-awok.json',        say: 'That’s the AWOK 2.4". Selected below.' },
       { re: /FNK0?104N/,            v: './manifest-freenove-s3-35.json', say: 'That’s the Freenove ESP32-S3 3.5" (BETA). Selected below.' },
-      { re: /FNK0?104/,             v: './manifest-freenove-s3.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
+      { re: /FNK0?104/,             v: './manifest-freenove-s3-40mhz.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
       { re: /CROWPANEL|CROW/,       v: './manifest-crowpanel7.json',  say: 'That’s the CrowPanel 7" (BETA). Selected below.' },
       { re: /T-?WATCH/,             v: './manifest-twatch-s3.json',   say: 'That’s a T-Watch S3 (BETA). Selected below.' },
       { re: /T-?DECK/,              v: './manifest-tdeck-plus.json',  say: 'That’s the LilyGo T-Deck Plus (BETA). Selected below.' },

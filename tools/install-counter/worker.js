@@ -29,7 +29,7 @@ const BOARDS = new Set([
   "cyd", "cyd-fast", "cyd-ili9341", "cyd-ili9341-fast",
   "freenove32", "cyd32c", "cyd35-fast", "cyd35c-fast",
   "awok", "rlphantom-r",
-  "freenove-s3", "freenove-s3-35", "crowpanel7", "tdeck-plus",
+  "freenove-s3", "freenove-s3-40mhz", "freenove-s3-35", "crowpanel7", "tdeck-plus",
   "nm-cyd-c5", "marauder-v8",
   "sticks3", "cardputer-adv",
   "twatch-s3",

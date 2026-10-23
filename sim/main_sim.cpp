@@ -330,6 +330,8 @@ static void usage() {
         "  --theme N         palette index\n"
         "  --alert N         DetectionType the ALERT screen fires on\n"
         "  --first / --night / --lastfree   the ALERT card's banners\n"
+        "                    SQUACHSIM_SNOOZE=\"30 MIN\": SNOOZE mid-pick on that step\n"
+        "                    SQUACHSIM_TOAST=\"HEAD|sub\": a toast over CLEAR\n"
         "  --noseed          no detections at all -- CLEAR's idle state\n"
         "  --gps             a fresh GPS fix: CLEAR's GPS label, DIAGNOSTICS' GPS lines,\n"
         "                    the ALERT card's place\n"
@@ -652,6 +654,14 @@ int main(int argc, char** argv) {
     // SQUACHSIM_POWEROFF=1: the note the Freenove S3 boards show while BOOT
     // is held toward POWER OFF, for the release clip.
     if (getenv("SQUACHSIM_POWEROFF")) Theme::showToast("POWER OFF", "KEEP HOLDING BOOT", Theme::AMBER, 8000);
+    // SQUACHSIM_TOAST="HEAD|sub": any toast over CLEAR, for a release clip
+    // (the SNOOZED one the alert card leaves behind).
+    static char toastHead[24], toastSub[40];
+    const bool simToast = getenv("SQUACHSIM_TOAST") != nullptr;
+    if (simToast) {
+        sscanf(getenv("SQUACHSIM_TOAST"), "%23[^|]|%39[^\n]", toastHead, toastSub);
+        Theme::showToast(toastHead, toastSub, Theme::AMBER, 8000);
+    }
     // SQUACHSIM_SAY="LINE": a line in his bubble as the screen opens, for
     // comparing bubble sizes across panels.
     if (const char* say = getenv("SQUACHSIM_SAY")) Squachy::announce(say);
@@ -757,7 +767,7 @@ int main(int argc, char** argv) {
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
         if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
-                                         if (headsUp || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
+                                         if (headsUp || simToast || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
         else if (screen == "log") {
             const bool info = (infoType >= 0);
             const DetectionType it = info ? (DetectionType)infoType : DetectionType::UNKNOWN;
@@ -766,7 +776,16 @@ int main(int argc, char** argv) {
                       info ? DetectionInfo::explainLive(it, engine) : "",
                       false, false, false);   // no confirm panel in the sim: nothing watched, nothing hunted
         }
-        else if (screen == "alert")    uiAlertTick(frame, t, engine, false, nullptr, "");
+        else if (screen == "alert")    {
+            // SQUACHSIM_SNOOZE=label: SNOOZE mid-pick, showing that step, its
+            // bar running out over 3 s from the capture's start.
+            if (const char* snz = getenv("SQUACHSIM_SNOOZE")) {
+                const uint32_t from = now + (uint32_t)frames * STEP_MS;
+                const uint32_t gone = t > from ? (t - from) / 3 : 0;
+                uiAlertSetSnoozePick(snz, (uint16_t)(gone >= 1000 ? 0 : 1000 - gone));
+            }
+            uiAlertTick(frame, t, engine, false, nullptr, "");
+        }
         else if (screen == "settings") uiSettingsTick(frame, t, engine);
         else if (screen == "detfilter") uiDetFilterTick(frame, t, engine);
         else if (screen == "power")    uiPowerTick(frame, t, engine);

@@ -91,7 +91,7 @@ whole firmware but has had fewer hours on it. The longer answer is in
 | AWOK 2.4" — ESP32 Marauder v6.1 | Yes | |
 | 3.5" resistive / capacitive — ESP32-3248S035R / C | BETA | |
 | ESP32-32E 2.8" / 3.5" — E32R28T / E32R35T | Via another build | Takes the 2.8" CYD ILI9341 build and the 3.5" resistive one; type the code into the flasher's board finder |
-| Freenove ESP32-S3 2.8" — FNK0104B | BETA | Capacitive touch, SDMMC card slot, WS2812 light, battery connector. Pins in [docs/PINOUT.md](docs/PINOUT.md) |
+| Freenove ESP32-S3 2.8" — FNK0104B | BETA | Capacitive touch, SDMMC card slot, WS2812 light, battery connector. Torn screen? On the flasher, untick 80 MHz under Advanced for the 40 MHz build. Pins in [docs/PINOUT.md](docs/PINOUT.md) |
 | Freenove ESP32-S3 4.0" — FNK0104S | BETA (build it yourself) | The 2.8"'s board with a 320×480 ST7796: `pio run -e freenove-s3-40 -t upload`. Not on the flasher yet |
 | Freenove ESP32-S3 3.5" — FNK0104N | BETA | The black 3.5": a 320×480 panel on its own QSPI driver, capacitive touch, SDMMC card slot, WS2812 light, battery connector. Big text, and pets at double size |
 | Elecrow CrowPanel Advance 7.0 | BETA | 800×480, drawn at 400×240 doubled on purpose. Has a buzzer, silent unless you switch it on. [docs/CROWPANEL7.md](docs/CROWPANEL7.md) |

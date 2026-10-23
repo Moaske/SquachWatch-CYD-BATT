@@ -32,6 +32,19 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.40.0 "Wake Me Up Before You Go-Go", 320x240: SNOOZE mid-pick on the
+    # alert card (SQUACHSIM_SNOOZE is the step it shows, its bar running out
+    # over the capture), the SNOOZED toast it leaves on CLEAR
+    # (SQUACHSIM_TOAST), then the T-Deck: Meshtastic names on the LORA page,
+    # the chats with a channel picked (SQUACHSIM_LORACH), and LORA SETTINGS.
+    "wake-me-up": [
+        ("alert", 40, 30, [], {"SQUACHSIM_SNOOZE": "10 MIN"}, 1300, "SNOOZE COUNTS TAPS NOW. ONE TAP: 10 MIN."),
+        ("alert", 40, 46, [], {"SQUACHSIM_SNOOZE": "4 HOURS"}, 1300, "FOUR TAPS: FOUR HOURS OF PEACE."),
+        ("clear", 40, 40, ["--bg", "5"], {"SQUACHSIM_TOAST": "SNOOZED|This one, for 4 hours", "SQUACHSIM_BATT": "80"}, 1600, "SQUACHY WILL WAKE YOU. LATER."),
+        ("lora", 40, 40, [], {"SQUACHSIM_LORATX": "1"}, 1500, "MESHTASTIC FOLKS HAVE NAMES NOW, NOT NUMBERS."),
+        ("lorachat", 20, 60, [], {"SQUACHSIM_LORATX": "1", "SQUACHSIM_LORACH": "Yowie", "SQUACHSIM_LORATYPE": "ANYONE SEEN MY LEFT BOOT?"}, 1700, "PICK A CHANNEL. YELL INTO IT."),
+        ("lorasettings", 20, 30, [], {}, 1700, "THE T-DECK GOT ITS OWN LORA SETTINGS."),
+    ],
     # v1.39.0 "Radar Love", at the T-Deck Plus's 320x240: the LORA page on the
     # emulator's made-up band (sim/lora_sim.cpp: Bluff Creek, cryptids only).
     # A packet lands 0.7 s into every capture, on the open tab's network, so

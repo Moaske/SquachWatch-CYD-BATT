@@ -248,11 +248,14 @@ jobs:
           # freenove-s3 (Freenove ESP32-S3 2.8", FNK0104B) and crowpanel7
           # (Elecrow CrowPanel Advance 7.0) are S3s too, public BETAs from
           # v1.24.0, contributed and tested on their authors' boards (#16, #11).
+          # freenove-s3-40mhz is the same 2.8" at a 40 MHz screen wire, for the
+          # panels that tear at 80 (#65, #14); the flasher offers it by unticking
+          # 80 MHz under Advanced on the 2.8"'s row. A public BETA from v1.40.0.
           # freenove-s3-35 is the black Freenove ESP32-S3 3.5" (FNK0104N), a
           # public BETA from v1.34.0: the 2.8"'s flash layout, its own QSPI panel.
           # tdeck-plus is the LilyGo T-Deck Plus: the same S3, flash layout and
           # bootloader as the watch, a public BETA from v1.36.0.
-          pio run -e twatch-s3 -e freenove-s3 -e freenove-s3-35 -e crowpanel7 -e tdeck-plus
+          pio run -e twatch-s3 -e freenove-s3 -e freenove-s3-40mhz -e freenove-s3-35 -e crowpanel7 -e tdeck-plus
           # sticks3 is the M5Stack StickS3: an S3 with 8 MB of flash, so the
           # CYDs' partition table behind an S3 bootloader of its own. LAB ONLY:
           # built and signed every run, offered under ?lab=1, never attached
@@ -351,7 +354,7 @@ jobs:
             0x8000  .pio/build/twatch-s3/partitions.bin \
             0xe000  "$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin" \
             0x10000 .pio/build/twatch-s3/firmware.bin
-          for v in freenove-s3 freenove-s3-35 crowpanel7 tdeck-plus; do
+          for v in freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus; do
             python -m esptool --chip esp32s3 merge_bin \
               -o "firmware-$v-merged.bin" \
               --flash_mode dio --flash_freq 80m --flash_size 16MB \
@@ -430,7 +433,7 @@ jobs:
           # assumed, for the same reason as the ESP32 pair above.
           for f in bootloader partitions; do
             ref="$(sha256sum ".pio/build/twatch-s3/$f.bin" | cut -d' ' -f1)"
-            for v in freenove-s3 freenove-s3-35 crowpanel7 tdeck-plus; do
+            for v in freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus; do
               got="$(sha256sum ".pio/build/$v/$f.bin" | cut -d' ' -f1)"
               if [ "$got" != "$ref" ]; then
                 echo "::error::$v/$f.bin differs from twatch-s3/$f.bin, which the S3 manifests share."
@@ -445,7 +448,7 @@ jobs:
           # merged image for those on purpose: the merged blob is a
           # manual-recovery artifact, and recovery should land you on the
           # spec-compliant build rather than the overclocked one.
-          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
+          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
             cp ".pio/build/$v/firmware.bin" "$v-firmware.bin"
           done
 
@@ -463,7 +466,7 @@ jobs:
           fi
           umask 077
           printf '%s\n' "$OTA_SIGNING_KEY" > "$RUNNER_TEMP/ota_key.pem"
-          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
+          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
             python tools/sign_firmware.py --key "$RUNNER_TEMP/ota_key.pem" \
               --env "$v" --bin "$v-firmware.bin" --out "$v-firmware.sig"
           done
@@ -500,6 +503,7 @@ jobs:
                     "web-flasher/manifest-cyd35c-fast.json",
                     "web-flasher/manifest-twatch-s3.json",
                     "web-flasher/manifest-freenove-s3.json",
+                    "web-flasher/manifest-freenove-s3-40mhz.json",
                     "web-flasher/manifest-freenove-s3-35.json",
                     "web-flasher/manifest-crowpanel7.json",
                     "web-flasher/manifest-sticks3.json",
@@ -535,6 +539,7 @@ jobs:
           cp web-flasher/manifest-cyd35c-fast.json manifest-cyd35c-fast.json
           cp web-flasher/manifest-twatch-s3.json manifest-twatch-s3.json
           cp web-flasher/manifest-freenove-s3.json manifest-freenove-s3.json
+          cp web-flasher/manifest-freenove-s3-40mhz.json manifest-freenove-s3-40mhz.json
           cp web-flasher/manifest-freenove-s3-35.json manifest-freenove-s3-35.json
           cp web-flasher/manifest-crowpanel7.json manifest-crowpanel7.json
           cp web-flasher/manifest-tdeck-plus.json manifest-tdeck-plus.json
@@ -581,6 +586,9 @@ jobs:
             freenove-s3-firmware.bin \
             firmware-freenove-s3-merged.bin \
             manifest-freenove-s3.json \
+            freenove-s3-40mhz-firmware.bin \
+            firmware-freenove-s3-40mhz-merged.bin \
+            manifest-freenove-s3-40mhz.json \
             freenove-s3-35-firmware.bin \
             firmware-freenove-s3-35-merged.bin \
             manifest-freenove-s3-35.json \
@@ -684,6 +692,7 @@ jobs:
           cp web-flasher/manifest-cyd35c-fast.json _site/manifest-cyd35c-fast.json
           cp web-flasher/manifest-twatch-s3.json _site/manifest-twatch-s3.json
           cp web-flasher/manifest-freenove-s3.json _site/manifest-freenove-s3.json
+          cp web-flasher/manifest-freenove-s3-40mhz.json _site/manifest-freenove-s3-40mhz.json
           cp web-flasher/manifest-freenove-s3-35.json _site/manifest-freenove-s3-35.json
           cp web-flasher/manifest-crowpanel7.json _site/manifest-crowpanel7.json
           cp web-flasher/manifest-sticks3.json _site/manifest-sticks3.json
@@ -767,7 +776,7 @@ jobs:
           import json, shutil, os
           label = "${{ steps.ver.outputs.label }}"
           ver   = "${{ steps.ver.outputs.version }}"
-          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "tdeck-plus", "sticks3", "cardputer-adv", "tab5"):
+          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-40mhz", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "tdeck-plus", "sticks3", "cardputer-adv", "tab5"):
               # The C5s and the Tab5 come from their own runner and may not have come at all.
               if not os.path.exists(board + "-firmware.bin"):
                   print("::warning::no %s build this run; not in the lab list" % board)
@@ -812,7 +821,7 @@ jobs:
             # firmware here: v1.16.0 shipped cyd35-fast to the release and into
             # index.html's <option> list but neither into _site, so the 3.5"
             # appeared in the picker and 404'd when chosen.
-            for board in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
+            for board in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
               cp "$board-firmware.bin" "_site/$board-firmware.bin"
               # The Bluetooth update page fetches the image and its signature
               # side by side from the site root.
