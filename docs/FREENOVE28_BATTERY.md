@@ -101,6 +101,35 @@ A `[batt]` line is printed at boot and with every sample.
   BAT+ disagrees with `BATT` by more than a few tens of mV, the build flag
   `-DBOARD_BATT_X1000=` trims it (2000 = ×2.000).
 
+## GPS (optional)
+
+The `freenove28-gps` build adds upstream's CYD GPS support: a position on each
+SD-card log row and on the alert card, the clock set from the satellites, the
+fix on the home screen and in DIAGNOSTICS, and WARDRIVE in Settings, which
+writes a WiGLE file to the SD card.
+
+Written for the **Adafruit Mini GPS PA1010D** (UART at 9600 baud, NMEA, out of
+the box). Three wires to the P4 connector, nothing else:
+
+| PA1010D | Freenove P4 |
+|---|---|
+| VIN | pin 1, 3.3 V |
+| TX | pin 2, IO35 |
+| GND | pin 4, GND |
+
+The board only listens, so the module's RX stays unconnected. Check P4's pin 1
+with a meter first (3.3 V to GND).
+
+**Time without a fix.** With a CR1220 in the PA1010D's holder its clock keeps
+running while the board is off. Before the first fix it already sends the date
+and time, and the firmware sets the clock from that (`[clock] set from the GPS
+module's own clock` on the console) -- indoors too, where a fix may never
+come. It is believed only after three sentences in a row that tick forward, in
+a year 2025-2045, so a module whose clock never ran is ignored. Network time
+and a real fix both still take precedence.
+
+Either build replaces the other with an ordinary update; settings are kept.
+
 ## Building and flashing
 
 Every push to the `freenove28` branch runs **Freenove 2.8 battery build** in
@@ -131,6 +160,6 @@ From Freenove's schematic (`2.8inch_ESP32-32E_Display_Schematic.pdf`):
 | RGB LED (common anode, lit low) | R 22, G 16, B 17 |
 | Audio amplifier | in 26, enable 4 |
 | Battery divider (100K/100K) | 34 |
-| P4 connector | 3.3 V, **35**, (none), GND |
+| P4 connector | 3.3 V, **35** (GPS TX in the `-gps` build), (none), GND |
 | P3 connector | SPI: MOSI 23, MISO 19, CLK 18, CS 27 |
 | BOOT button | 0 |

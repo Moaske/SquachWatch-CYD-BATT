@@ -59,6 +59,32 @@ int main() {
     Gnss::sentence(nmea("GNRMC,000002.00,V,,,,,,,280926,,,N"), 4000);
     ck("a void RMC does not move the clock", Gnss::utcEpoch() == Gnss::toEpoch(2026, 9, 28, 12, 35, 19));
 
+    suite("The module's own clock before a fix (fork addition)");
+    Gnss::reset();
+    ck("nothing yet", Gnss::rtcEpoch() == 0);
+    Gnss::sentence(nmea("GNRMC,101500.000,V,,,,,,,291026,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,101501.000,V,,,,,,,291026,,,N"), 0);
+    ck("two ticks are not enough", Gnss::rtcEpoch() == 0);
+    Gnss::sentence(nmea("GNRMC,101502.000,V,,,,,,,291026,,,N"), 0);
+    ck("three in a row that tick: believed", Gnss::rtcEpoch() == Gnss::toEpoch(2026, 10, 29, 10, 15, 2));
+    ck("but it is not a fix", !Gnss::fix().valid && Gnss::utcEpoch() == 0);
+    Gnss::reset();
+    Gnss::sentence(nmea("GNRMC,000005.800,V,,,,,,,060180,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,000006.800,V,,,,,,,060180,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,000007.800,V,,,,,,,060180,,,N"), 0);
+    ck("an RTC that never ran (1980) is not believed", Gnss::rtcEpoch() == 0);
+    Gnss::reset();
+    Gnss::sentence(nmea("GNRMC,101500.000,V,,,,,,,291026,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,101530.000,V,,,,,,,291026,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,101531.000,V,,,,,,,291026,,,N"), 0);
+    ck("a jump restarts the count", Gnss::rtcEpoch() == 0);
+    Gnss::reset();
+    Gnss::sentence(nmea("GNRMC,101500.000,V,,,,,,,,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,101501.000,V,,,,,,,,,,N"), 0);
+    Gnss::sentence(nmea("GNRMC,101502.000,V,,,,,,,,,,N"), 0);
+    ck("a time with no date is not believed", Gnss::rtcEpoch() == 0);
+    Gnss::reset();
+
     suite("Satellites in view and heard (GSV)");
     Gnss::reset();
     // GPS: 6 in view over two messages, four with a signal.

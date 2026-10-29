@@ -41,6 +41,11 @@ const Fix& fix();
 Sky sky();
 // UTC from the last RMC, or 0: set the clock from it once it has a fix.
 uint32_t utcEpoch();
+// UTC from the module's own battery-backed clock, before any fix (fork
+// addition): RMC sentences with status V that already carry a date and a
+// time, three in a row ticking forward, in a year 2025-2045. 0 otherwise --
+// no backup cell, or a module whose RTC never ran.
+uint32_t rtcEpoch();
 // Sentences parsed and rejected (bad checksum), since the last reset.
 uint32_t good();
 uint32_t bad();

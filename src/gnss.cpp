@@ -12,6 +12,14 @@ namespace {
 Fix      s_fix;
 uint32_t s_rmcEpoch = 0;       // date + time from the newest valid RMC
 uint32_t s_rmcDay   = 0;       // the date alone, for dating a GGA time
+// The module's own clock, before it has a fix (fork addition). A GPS with a
+// backup cell (a CR1220 on the PA1010D) keeps its RTC through power-off and
+// fills in RMC's time and date while the status is still V, no fix. Believed
+// only after three such sentences in a row that tick forward like a clock,
+// and only for a year a real RTC could hold: a module whose RTC never ran
+// sends a default date (1980, or 2080 counting forward).
+uint32_t s_rtcEpoch = 0;
+uint8_t  s_rtcRun   = 0;
 bool     s_faked    = false;
 uint32_t s_good = 0, s_bad = 0;
 
@@ -107,17 +115,29 @@ void onGga(char** f, uint8_t n, uint32_t nowMs) {
 }
 
 void onRmc(char** f, uint8_t n) {
-    if (n < 10 || f[2][0] != 'A') return;
+    if (n < 10) return;
+    const bool fix = f[2][0] == 'A';
+    if (!fix && f[2][0] != 'V') return;
     const long tod = timeOfDay(f[1]);
     const char* d = f[9];
-    if (tod < 0 || strlen(d) != 6) return;
-    for (int i = 0; i < 6; i++) if (d[i] < '0' || d[i] > '9') return;
+    if (tod < 0 || strlen(d) != 6) { if (!fix) s_rtcRun = 0; return; }
+    for (int i = 0; i < 6; i++) if (d[i] < '0' || d[i] > '9') { if (!fix) s_rtcRun = 0; return; }
     const int day = (d[0] - '0') * 10 + (d[1] - '0');
     const int mon = (d[2] - '0') * 10 + (d[3] - '0');
     const int yr  = 2000 + (d[4] - '0') * 10 + (d[5] - '0');
-    if (mon < 1 || mon > 12 || day < 1 || day > 31) return;
-    s_rmcDay   = toEpoch(yr, mon, day, 0, 0, 0);
-    s_rmcEpoch = s_rmcDay + (uint32_t)tod;
+    if (mon < 1 || mon > 12 || day < 1 || day > 31) { if (!fix) s_rtcRun = 0; return; }
+    const uint32_t dayEpoch = toEpoch(yr, mon, day, 0, 0, 0);
+    if (fix) {
+        s_rmcDay   = dayEpoch;
+        s_rmcEpoch = s_rmcDay + (uint32_t)tod;
+        return;
+    }
+    // No fix yet: the module's RTC, if it is running.
+    if (yr < 2025 || yr > 2045) { s_rtcRun = 0; return; }
+    const uint32_t e = dayEpoch + (uint32_t)tod;
+    const uint32_t step = e - s_rtcEpoch;
+    s_rtcRun   = (s_rtcEpoch && step >= 1 && step <= 3) ? (uint8_t)(s_rtcRun < 255 ? s_rtcRun + 1 : 255) : 1;
+    s_rtcEpoch = e;
 }
 
 void onGsv(const char* id, char** f, uint8_t n) {
@@ -182,6 +202,7 @@ Sky sky() {
 }
 
 uint32_t utcEpoch() { return s_rmcEpoch; }
+uint32_t rtcEpoch() { return s_rtcRun >= 3 ? s_rtcEpoch : 0; }
 uint32_t good() { return s_good; }
 uint32_t bad()  { return s_bad; }
 
@@ -194,6 +215,7 @@ bool fresh(uint32_t nowMs) { return s_fix.valid && (int32_t)(nowMs - s_fix.atMs)
 void reset() {
     s_fix = Fix();
     s_rmcEpoch = s_rmcDay = 0;
+    s_rtcEpoch = 0; s_rtcRun = 0;
     s_faked = false;
     s_phone = false;
     s_good = s_bad = 0;

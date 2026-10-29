@@ -56,6 +56,13 @@ jobs:
           set -o pipefail
           pio run -e freenove28 2>&1 | tee build-freenove28.log
 
+      # The same with upstream's CYD GPS code: a GPS module on IO35 (P4).
+      - name: Build freenove28-gps
+        if: ${{ !cancelled() }}
+        run: |
+          set -o pipefail
+          pio run -e freenove28-gps 2>&1 | tee build-freenove28-gps.log
+
       # The battery work touches shared files (the black box, the settings
       # list, the status light). The plain 2.8" CYD build must still compile
       # without any of it.
@@ -103,6 +110,19 @@ jobs:
           cp "$B/bootloader.bin"  "$OUT/parts/bootloader-0x1000.bin"
           cp "$B/partitions.bin"  "$OUT/parts/partitions-0x8000.bin"
           cp "$OTADATA"           "$OUT/parts/otadata-0xE000.bin"
+          # The GPS build: same bootloader and partition table (checked), its
+          # own app.
+          G=.pio/build/freenove28-gps
+          cmp -s "$B/bootloader.bin" "$G/bootloader.bin" && cmp -s "$B/partitions.bin" "$G/partitions.bin" \
+            || { echo "::error::freenove28-gps has its own bootloader or partition table"; exit 1; }
+          python -m esptool --chip esp32 merge_bin \
+            -o "$OUT/freenove28-gps-FULL-merged-0x0.bin" \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            0x1000  "$B/bootloader.bin" \
+            0x8000  "$B/partitions.bin" \
+            0xE000  "$OTADATA" \
+            0x10000 "$G/firmware.bin"
+          cp "$G/firmware.bin"    "$OUT/freenove28-gps-UPDATE-app-0x10000.bin"
           cat > "$OUT/FLASHING.txt" <<EOF
           SquachWatch-CYD, Freenove FNK0114B 2.8" battery build
           Version: $VER
@@ -118,6 +138,10 @@ jobs:
           needed when the board ever took a WiFi or Bluetooth update (it may
           be running the second app slot), and harmless otherwise.
 
+          With a GPS module on IO35 (P4 connector): the same, with the
+          freenove28-gps-... files instead. Either build can replace the
+          other with an update; settings are kept.
+
           Browser flasher: https://espressif.github.io/esptool-js/
           Connect at 115200, add the file(s) with the address(es) above, Program.
           Switch the battery OFF while the board is on its own USB port.
@@ -125,7 +149,7 @@ jobs:
           echo "OUT=$OUT" >> "$GITHUB_ENV"
           ls -la "$OUT" "$OUT/parts"
           # Flash use, for keeping an eye on the 1.9 MB app slot.
-          echo "App size: $(stat -c%s "$B/firmware.bin") bytes of 1966080"
+          echo "App size: $(stat -c%s "$B/firmware.bin") bytes of 1966080 (GPS build $(stat -c%s "$G/firmware.bin"))"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -5670,6 +5670,16 @@ static void cydGpsTick(uint32_t now) {
             Serial.println("[clock] set from GPS");
         }
     }
+    // Before any fix (indoors, say): the module's own battery-backed clock,
+    // when it has one running -- see Gnss::rtcEpoch(). Once a boot, and only
+    // when nothing better has set the clock; a real fix still sets it again
+    // above, since this leaves s_cydGpsClockSet alone.
+    static bool s_cydGpsRtcSet = false;
+    if (!s_cydGpsRtcSet && !s_cydGpsClockSet && !Clock::synced() && !Clock::trusted() && Gnss::rtcEpoch()) {
+        s_cydGpsRtcSet = true;
+        if (Clock::setEpoch(Gnss::rtcEpoch()))
+            Serial.println("[clock] set from the GPS module's own clock (no fix yet)");
+    }
 }
 #endif
 
