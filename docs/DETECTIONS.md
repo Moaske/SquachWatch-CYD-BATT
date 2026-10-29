@@ -341,6 +341,34 @@ higher false-positive risk than the Samsung match above.
 
 ---
 
+## European makers (fork addition)
+
+The tables lean North American (Flock, ShotSpotter, Raven, Axon). Added for
+Europe on 2026-10-29, every block read out of the IEEE MA-L registry (as
+bundled with netaddr), matched on the address a device transmits WiFi with:
+
+| Maker | What | Type | Grade | Blocks |
+|---|---|---|---|---|
+| Hikvision | CCTV, doorbells | `CAMERA` | High | all 67 (3 were already here) |
+| EZVIZ | Hikvision's consumer cameras and doorbells | `CAMERA` | High | 7 |
+| Dahua (and so Imou) | CCTV, consumer cameras | `CAMERA` | High | 28 |
+| Tattile (IT) | ANPR / number-plate cameras | `ALPR` | High | 10 |
+| Adaptive Recognition (HU) | ANPR cameras | `ALPR` | High | 1 |
+| Jenoptik | speed, red-light and plate cameras | `ALPR` | Medium | 1 (the group's own; its traffic arm has none) |
+| Zepcam (NL) | body cams for enforcement and security | `AXON` | High | 1 |
+
+Fixed ANPR and speed cameras are mostly wired or on 4G, so they only show
+when one has WiFi up; the blocks are theirs alone, so a hit means what it
+says. Left out on purpose: JENOPTIK Advanced Systems (defence electronics),
+Netatmo (its one block covers thermostats and weather stations too) and
+Teltonika (routers in police vans, but also in every bus and shop). Already
+covered elsewhere: Motorola Solutions (Edesix/WatchGuard body cams), Axis,
+EU Remote ID (the same broadcast as OpenDroneID), and the trackers, which
+are the same worldwide. Not detectable this way: TETRA radios (C2000),
+IMSI catchers, wired cameras.
+
+---
+
 ## Trackers that change their address (fork addition)
 
 AirTags, Google Find My tags and Samsung SmartTags change their Bluetooth

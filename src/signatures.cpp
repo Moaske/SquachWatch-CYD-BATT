@@ -20,6 +20,9 @@ const OuiEntry kOuiTable[] = {
     // WatchGuard Technologies, the firewall maker, whose 00:01:21 and
     // 00:90:7F would name every office firewall a police camera.
     {{0x00, 0x1D, 0x96}, "WatchGuard",   DetectionType::AXON,       Confidence::MED_CONF},
+    // Zepcam B.V. (NL): body cams for Dutch enforcement and security work,
+    // with WiFi for live streaming. Its one IEEE MA-L block. Fork addition.
+    {{0x48, 0x46, 0x8D}, "Zepcam",      DetectionType::AXON,       Confidence::HIGH_CONF},
     {{0x00, 0x23, 0xBD}, "DigitalAlly",  DetectionType::AXON,       Confidence::MED_CONF},
 
     // ---- ShotSpotter / SoundThinking gunshot sensors ----
@@ -106,6 +109,28 @@ const OuiEntry kOuiTable[] = {
     // Genetec's AutoVu is an LPR platform, so these sit with the ALPR set.
     {{0x00, 0xBF, 0x15}, "ALPR-Gentec",  DetectionType::ALPR,       Confidence::HIGH_CONF},
     {{0x0C, 0xBF, 0x15}, "ALPR-Gentec",  DetectionType::ALPR,       Confidence::HIGH_CONF},
+    // European plate readers (fork addition, 2026-10-29), every block read
+    // out of the IEEE MA-L registry. Fixed ANPR is mostly wired or on 4G, so
+    // these only fire when one has WiFi up -- but the blocks are theirs
+    // alone, so a hit means what it says.
+    // Tattile SRL (Italy): ANPR cameras across Europe. All ten of its blocks.
+    {{0x00, 0x00, 0xA5}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x20, 0x31}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x20, 0xB3}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x40, 0x75}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x40, 0x8E}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x60, 0x4F}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x80, 0x46}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x90, 0x43}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0x90, 0x8B}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    {{0x00, 0xA0, 0x80}, "ALPR-Tattil", DetectionType::ALPR,       Confidence::HIGH_CONF},
+    // Adaptive Recognition Hungary (ARH): ANPR cameras.
+    {{0x00, 0x1D, 0x4D}, "ALPR-ARH",    DetectionType::ALPR,       Confidence::HIGH_CONF},
+    // JENOPTIK, the parent's old block. Its traffic division (speed and red-
+    // light cameras) has none of its own in the registry, and this one is
+    // the whole group's, hence Medium. Its other block, JENOPTIK Advanced
+    // Systems, is defence electronics, and left out.
+    {{0x00, 0x04, 0x4C}, "ALPR-Jenopt", DetectionType::ALPR,       Confidence::MED_CONF},
     // Verkada sells LPR too but is mostly general-purpose surveillance, so
     // it is filed as a camera rather than overstated as a plate reader.
 
@@ -131,6 +156,111 @@ const OuiEntry kOuiTable[] = {
     // Labelled Reolink; registered to Hikvision. Both make cameras, so the
     // detection stood up while the attribution did not.
     {{0x28, 0x57, 0xBE}, "Hikvision",    DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    // The rest of Hikvision's blocks, and those of its consumer brand EZVIZ
+    // and of Dahua (and so its consumer brand Imou): Europe's two biggest CCTV
+    // makers, between them most of the WiFi cameras and doorbells on a Dutch
+    // street. Fork addition, 2026-10-29: every block registered to
+    // "Hangzhou Hikvision Digital Technology", "Hangzhou Ezviz Software" or
+    // "Zhejiang Dahua Technology" in the IEEE MA-L registry.
+    {{0x04, 0x03, 0x12}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x08, 0x54, 0x11}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x08, 0xA1, 0x89}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x08, 0xCC, 0x81}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x0C, 0x75, 0xD2}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x10, 0x12, 0xFB}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x18, 0x68, 0xCB}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x18, 0x80, 0x25}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x24, 0x0F, 0x9B}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x24, 0x28, 0xFD}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x24, 0x32, 0xAE}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x24, 0x48, 0x45}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x2C, 0xA5, 0x9C}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x34, 0x09, 0x62}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x3C, 0x1B, 0xF8}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x40, 0xAC, 0xBF}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x44, 0x47, 0xCC}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x44, 0xA6, 0x42}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x4C, 0x62, 0xDF}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x4C, 0xBD, 0x8F}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x4C, 0xF5, 0xDC}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x50, 0xE5, 0x38}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x54, 0x8C, 0x81}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x54, 0xC4, 0x15}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x58, 0x03, 0xFB}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x58, 0x50, 0xED}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x5C, 0x34, 0x5B}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x64, 0xDB, 0x8B}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x68, 0x6D, 0xBC}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x74, 0x3F, 0xC2}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x80, 0x7C, 0x62}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x80, 0xBE, 0xAF}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x80, 0xF5, 0xAE}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x84, 0x9A, 0x40}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x8C, 0xE7, 0x48}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x94, 0xE1, 0xAC}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x98, 0x8B, 0x0A}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x98, 0x9D, 0xE5}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x98, 0xDF, 0x82}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x98, 0xF1, 0x12}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xA0, 0xFF, 0x0C}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xA4, 0x14, 0x37}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xA4, 0xD5, 0xC2}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xAC, 0xB9, 0x2F}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xAC, 0xCB, 0x51}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xB4, 0xA3, 0x82}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xBC, 0x5E, 0x33}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xBC, 0x9B, 0x5E}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xBC, 0xAD, 0x28}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xBC, 0xBA, 0xC2}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xC0, 0x51, 0x7E}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xC0, 0x6D, 0xED}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xC4, 0x2F, 0x90}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xD4, 0xE8, 0x53}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xDC, 0x07, 0xF8}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xDC, 0xD2, 0x6A}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE0, 0xBA, 0xAD}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE0, 0xCA, 0x3C}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE0, 0xDF, 0x13}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE8, 0xA0, 0xED}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xEC, 0xA9, 0x71}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xEC, 0xC8, 0x9C}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xF8, 0x4D, 0xFC}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xFC, 0x9F, 0xFD}, "Hikvision",   DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x20, 0xBB, 0xBC}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x54, 0xD6, 0x0D}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x58, 0x8F, 0xCF}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x64, 0xF2, 0xFB}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x78, 0xA6, 0xA0}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x78, 0xC1, 0xAE}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xEC, 0x97, 0xE0}, "Ezviz",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x08, 0xED, 0xED}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x14, 0xA7, 0x8B}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x24, 0x52, 0x6A}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x38, 0xAF, 0x29}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x3C, 0xE3, 0x6B}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x3C, 0xEF, 0x8C}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x4C, 0x11, 0xBF}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x5C, 0xF5, 0x1A}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x64, 0xFD, 0x29}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x6C, 0x1C, 0x71}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x74, 0xC9, 0x29}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x8C, 0xE9, 0xB4}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x90, 0x02, 0xA9}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x98, 0xF9, 0xCC}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0x9C, 0x14, 0x63}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xA0, 0xBD, 0x1D}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xB4, 0x4C, 0x3B}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xBC, 0x32, 0x5F}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xC0, 0x39, 0x5A}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xC4, 0xAA, 0xC4}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xD4, 0x43, 0x0E}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE0, 0x2E, 0xFE}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE0, 0x50, 0x8B}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xE4, 0x24, 0x6C}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xF4, 0xB1, 0xC2}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xF8, 0xCE, 0x07}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xFC, 0x5F, 0x49}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
+    {{0xFC, 0xB6, 0x9D}, "Dahua",       DetectionType::CAMERA,     Confidence::HIGH_CONF},
     {{0x00, 0xE0, 0x4C}, "Realtek",      DetectionType::CAMERA,     Confidence::LOW_CONF},
     {{0xBC, 0xDD, 0xC2}, "Arlo",         DetectionType::CAMERA,     Confidence::LOW_CONF},
     {{0x4C, 0x69, 0x05}, "Blink",        DetectionType::CAMERA,     Confidence::LOW_CONF},

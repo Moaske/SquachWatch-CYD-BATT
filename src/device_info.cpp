@@ -68,12 +68,20 @@ const Device kDevices[] = {
       "A radio on WatchGuard Video's block: Motorola's police body cameras and in-car video. Not the firewall company of the same name." },
     { DetectionType::AXON, "DIGITAL ALLY", "DigitalAlly", nullptr,
       "A radio on Digital Ally's block: body cameras and in-car video for police, ambulance and security fleets." },
+    { DetectionType::AXON, "ZEPCAM", "Zepcam", nullptr,
+      "A Zepcam body camera, made in the Netherlands for enforcement officers, security staff and transport workers. Many stream live over WiFi." },
 
     // ---- ALPR ---------------------------------------------------------------
     { DetectionType::ALPR, "MOTOROLA", "ALPR-Mtrla", nullptr,
       "A radio on a Motorola Solutions block. Motorola owns Vigilant, a big plate-reader maker, but also makes police radios and much else: a possible plate reader, not a sure one." },
     { DetectionType::ALPR, "GENETEC", "ALPR-Gentec", nullptr,
       "A radio on a Genetec block. Genetec's AutoVu reads licence plates for police and parking enforcement, often from cameras mounted on patrol cars." },
+    { DetectionType::ALPR, "TATTILE", "ALPR-Tattil", nullptr,
+      "A Tattile camera. The Italian maker's number-plate readers sit on gantries, poles and patrol cars across Europe, for police, tolls and city zones." },
+    { DetectionType::ALPR, "ARH", "ALPR-ARH", nullptr,
+      "An Adaptive Recognition (ARH) camera: Hungarian number-plate readers for traffic enforcement, parking and border posts." },
+    { DetectionType::ALPR, "JENOPTIK", "ALPR-Jenopt", nullptr,
+      "A radio on Jenoptik's group block. Its traffic arm makes speed, red-light and plate cameras used across Europe, but the block is the whole group's, so: a maybe." },
 
     // ---- SKIMMER: names first -- over Bluetooth the label is just "BLE" -------
     { DetectionType::SKIMMER, "HC-05 MODULE", "Skim-HC05", "HC-0",
@@ -96,6 +104,10 @@ const Device kDevices[] = {
       "A radio on an Amazon block. Could be a Blink camera or a Ring device -- or an Echo, Fire TV or Kindle. Amazon's range is wide, so this is a medium guess." },
     { DetectionType::CAMERA, "HIKVISION", "Hikvision", nullptr,
       "A Hikvision camera: the world's biggest CCTV maker, barred from US government use over security and human-rights concerns, and common in shops and flats." },
+    { DetectionType::CAMERA, "EZVIZ", "Ezviz", nullptr,
+      "An EZVIZ camera or video doorbell: Hikvision's consumer brand, sold everywhere in Europe and often pointed at a front door or the street." },
+    { DetectionType::CAMERA, "DAHUA", "Dahua", nullptr,
+      "A Dahua camera, or its consumer brand Imou. The second-biggest CCTV maker after Hikvision, under the same US ban, and all over European shops and homes." },
     { DetectionType::CAMERA, "REALTEK", "Realtek", nullptr,
       "A Realtek WiFi chip. Plenty of cheap IP cameras use one -- so do routers, TVs and laptops. A weak camera guess." },
     { DetectionType::CAMERA, "ARLO", "Arlo", nullptr,

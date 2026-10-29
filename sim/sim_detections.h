@@ -64,6 +64,7 @@ inline const SimDetectionProfile kSimProfiles[] = {
     { DetectionType::AXON,        {0x00, 0x09, 0xBC}, "BodyWorn",    "BodyWorn Remote",-71, false, "BodyWorn remote" },
     { DetectionType::AXON,        {0x00, 0x1D, 0x96}, "WatchGuard",  "",               -73, true,  "WatchGuard Video" },
     { DetectionType::AXON,        {0x00, 0x23, 0xBD}, "DigitalAlly", "",               -74, true,  "Digital Ally" },
+    { DetectionType::AXON,        {0x48, 0x46, 0x8D}, "Zepcam",      "",               -72, true,  "Zepcam body cam" },
     // META
     { DetectionType::META,        {0x02, 0xFD, 0x5F}, "RayBanMeta",  "",               -66, false, "Ray-Ban Meta glasses" },
     { DetectionType::META,        {0x02, 0x01, 0xAB}, "Meta",        "",               -64, false, "Meta radio (glasses or Quest)" },
@@ -83,11 +84,16 @@ inline const SimDetectionProfile kSimProfiles[] = {
     // ALPR -- Motorola Solutions, which absorbed Vigilant, and Genetec AutoVu
     { DetectionType::ALPR,        {0x00, 0x04, 0x7D}, "ALPR-Mtrla",  "",               -76, true,  "Motorola plate reader" },
     { DetectionType::ALPR,        {0x00, 0xBF, 0x15}, "ALPR-Gentec", "",               -75, true,  "Genetec AutoVu" },
+    { DetectionType::ALPR,        {0x00, 0x90, 0x43}, "ALPR-Tattil", "",               -76, true,  "Tattile ANPR" },
+    { DetectionType::ALPR,        {0x00, 0x1D, 0x4D}, "ALPR-ARH",    "",               -77, true,  "ARH ANPR" },
+    { DetectionType::ALPR,        {0x00, 0x04, 0x4C}, "ALPR-Jenopt", "",               -78, true,  "Jenoptik" },
     // CAMERA -- each maker's own prefix from the OUI table
     { DetectionType::CAMERA,      {0x2C, 0xAA, 0x8E}, "Wyze",        "",               -63, true,  "Wyze camera" },
     { DetectionType::CAMERA,      {0xB8, 0xD7, 0xAF}, "Wyze-Mod",    "",               -66, true,  "Wyze module" },
     { DetectionType::CAMERA,      {0xF0, 0x27, 0x2D}, "Amazon",      "",               -62, true,  "Amazon device" },
     { DetectionType::CAMERA,      {0xC0, 0x56, 0xE3}, "Hikvision",   "",               -64, true,  "Hikvision camera" },
+    { DetectionType::CAMERA,      {0x20, 0xBB, 0xBC}, "Ezviz",       "",               -63, true,  "EZVIZ camera" },
+    { DetectionType::CAMERA,      {0x3C, 0xEF, 0x8C}, "Dahua",       "",               -65, true,  "Dahua camera" },
     { DetectionType::CAMERA,      {0x00, 0xE0, 0x4C}, "Realtek",     "",               -67, true,  "Realtek chip" },
     { DetectionType::CAMERA,      {0xBC, 0xDD, 0xC2}, "Arlo",        "",               -65, true,  "Arlo camera" },
     { DetectionType::CAMERA,      {0x4C, 0x69, 0x05}, "Blink",       "",               -61, true,  "Blink camera" },

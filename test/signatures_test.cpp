@@ -163,5 +163,27 @@ int main() {
         ck("a malformed advert is read safely", serviceDataUuid(bad, sizeof bad) == 0);
     }
 
+    suite("European makers, from the IEEE registry (fork addition)");
+    {
+        struct Want { uint8_t mac[6]; DetectionType t; Confidence c; const char* what; };
+        const Want w[] = {
+            {{0x04, 0x03, 0x12, 1, 2, 3}, DetectionType::CAMERA, Confidence::HIGH_CONF, "a Hikvision block beyond the first three"},
+            {{0x20, 0xBB, 0xBC, 1, 2, 3}, DetectionType::CAMERA, Confidence::HIGH_CONF, "EZVIZ"},
+            {{0x3C, 0xEF, 0x8C, 1, 2, 3}, DetectionType::CAMERA, Confidence::HIGH_CONF, "Dahua"},
+            {{0x00, 0x90, 0x43, 1, 2, 3}, DetectionType::ALPR,   Confidence::HIGH_CONF, "Tattile is a plate reader"},
+            {{0x00, 0x1D, 0x4D, 1, 2, 3}, DetectionType::ALPR,   Confidence::HIGH_CONF, "ARH is a plate reader"},
+            {{0x00, 0x04, 0x4C, 1, 2, 3}, DetectionType::ALPR,   Confidence::MED_CONF,  "Jenoptik's group block is only Medium"},
+            {{0x48, 0x46, 0x8D, 1, 2, 3}, DetectionType::AXON,   Confidence::HIGH_CONF, "Zepcam is a body cam"},
+        };
+        for (const Want& x : w) {
+            Confidence c = Confidence::LOW_CONF;
+            ck(x.what, lookupOui(x.mac, &c) == x.t && c == x.c);
+        }
+        const uint8_t defence[6] = { 0x48, 0xE3, 0xC3, 1, 2, 3 };
+        ck("JENOPTIK Advanced Systems (defence) is not listed", lookupOui(defence) == DetectionType::UNKNOWN);
+        const uint8_t netatmo[6] = { 0x70, 0xEE, 0x50, 1, 2, 3 };
+        ck("Netatmo is not listed (its block is thermostats too)", lookupOui(netatmo) == DetectionType::UNKNOWN);
+    }
+
     return report();
 }
