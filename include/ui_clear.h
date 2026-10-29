@@ -34,6 +34,13 @@ uint32_t uiMascotStepMs();
 void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
                   bool advance = true, bool scanMenu = false);
 
+// The battery gauge: a lava lamp under the menu icon, filled to the charge.
+// A board with a battery hands over a function that fills in the percent and
+// whether it is on the cable, and returns false while no cell is plugged in.
+// Boards without a battery never set one, and their screen does not change.
+typedef bool (*BatterySource)(uint8_t& pct, bool& charging);
+void uiClearSetBatterySource(BatterySource fn);
+
 #if SQUACH_MESH
 // SPIKE: the peer currently visiting, or nullptr. Owned by whatever discovers
 // peers -- for now that is only the emulator's --peer flag, so the CLEAR screen
@@ -114,3 +121,7 @@ bool uiClearEmote(uint8_t emote, uint8_t setup, bool fromGuest);
 // straight from the compose screen.
 void uiClearEmoteTick(uint32_t now);
 #endif
+
+// One XP counter tile, lit, at the main screen's scale: the FONTS page's
+// preview of XP TILES. Returns its width.
+int uiClearSampleTile(TFT_eSPI& t, int x, int y, const char* txt, uint16_t iconCol);

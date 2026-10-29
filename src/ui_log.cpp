@@ -308,8 +308,9 @@ static void rowLayout(TFT_eSPI& t, int bodyTop, int& detailY, int& rowH) {
     }
     t.setTextSize(2);
     int nameH = t.fontHeight();
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);           // the detail line's face (16 rows on the large panels)
     int detailH = t.fontHeight();
+    Theme::bodyFontOff(t);
     // Each row is a card now, the same panel Settings draws: two pixels of
     // air above the type label, three below the detail line, and the card's
     // own two-pixel gap under that.
@@ -417,8 +418,9 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
     // instead of the GLCD font actually being drawn here.
     t.setTextSize(2);
     int nameH = t.fontHeight();
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     int detailH = t.fontHeight();
+    Theme::bodyFontOff(t);
     int detailY, rowH;
     rowLayout(t, bodyTop, detailY, rowH);     // the hit test's numbers, exactly
     const int topPad = detailY - nameH;
@@ -478,15 +480,18 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         const bool kept = d->restored;
         const uint16_t dim = Theme::W95_SHADOW;
 
-        // Type label (colored)
+        // Type label (colored), in the system font whatever the row before
+        // left behind.
+        Theme::bodyFontOff(t);
         t.setTextSize(2);
         t.setTextColor(kept ? dim : Theme::colorFor(d->type), Theme::BG);
         t.setCursor(8, y + topPad);
         t.print(detectionTypeName(d->type));
         const int labelEnd = 8 + t.textWidth(detectionTypeName(d->type));
 
-        // MAC + RSSI line
-        t.setTextSize(1);
+        // MAC + RSSI line, in the body font (the system font at size 1
+        // everywhere but the large panels).
+        Theme::bodyFontOn(t);
         t.setTextColor(kept ? dim : Theme::WHITE, Theme::BG);
         char mac[24];
         Privacy::mac(mac, sizeof mac, d->mac);
@@ -494,10 +499,14 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         t.print(mac);
 
         // RSSI — MAC above runs "XX:XX:XX:XX:XX:XX" (17 chars, 102px
-        // at this font size) starting from x=8, so this column can't
-        // start before ~114 without drawing on top of it.
+        // in the system font) starting from x=8, so this column can't
+        // start before ~114 without drawing on top of it. Measured, so the
+        // body font's wider digits move the columns with them: 116 and 168
+        // in the system font, as they always were.
+        const int rssiX = 8 + t.textWidth("00:00:00:00:00:00") + 6;
+        const int hitsX = rssiX + t.textWidth("-100dBm") + 10;
         t.setTextColor(kept ? dim : Theme::CYAN, Theme::BG);
-        t.setCursor(116, y + detailY);
+        t.setCursor(rssiX, y + detailY);
         t.printf("%ddBm", d->rssi);
         // Closer or further since a couple of seconds ago, for a row that is
         // actually here: green up for nearer, red down for further, nothing
@@ -505,18 +514,18 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         // the same deadband, as the raw scan's NEARBY list.
         if (!kept && d->active) {
             const int delta = (int)d->rssi - (int)d->prevRssi;
-            const int ax = 116 + t.textWidth("-100dBm") + 3, ay = y + detailY;
+            const int ax = rssiX + t.textWidth("-100dBm") + 3, ay = y + detailY + (detailH - 7) / 2;
             if (delta >= 4)       t.fillTriangle(ax, ay + 6, ax + 6, ay + 6, ax + 3, ay, Theme::GREEN);
             else if (delta <= -4) t.fillTriangle(ax, ay, ax + 6, ay, ax + 3, ay + 6, Theme::RED);
         }
 
         // Hits
         t.setTextColor(kept ? dim : Theme::VAPOR_PURPLE, Theme::BG);
-        t.setCursor(168, y + detailY);
+        t.setCursor(hitsX, y + detailY);
         char hitsTxt[8];
         snprintf(hitsTxt, sizeof hitsTxt, "x%u", d->hits);
         t.print(hitsTxt);
-        const int hitsEnd = 168 + t.textWidth(hitsTxt);
+        const int hitsEnd = hitsX + t.textWidth(hitsTxt);
 
         // An ignored device says so on its row (issue #18): a grey tag at the
         // end of the detail line, IGNORED where it fits and IGN where the
@@ -587,6 +596,7 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
 
         y += rowH;
     }
+    Theme::bodyFontOff(t);
 
     // Scroll position indicator -- reserved 10px on the right edge
     // (the timestamp column above already stops short of the true

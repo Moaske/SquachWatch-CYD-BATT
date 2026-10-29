@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- The flasher, laid out as three steps (it was next.html, under review, from 2026-10-04 until it replaced the one-page layout on 2026-10-11) -->
 <title>SquachWatch Flasher</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CjxyZWN0IHg9IjYiIHk9IjQiIHdpZHRoPSIyMCIgaGVpZ2h0PSIxNyIgZmlsbD0iIzJhMTAwMCIvPgo8cmVjdCB4PSI4IiB5PSI3IiB3aWR0aD0iMTYiIGhlaWdodD0iMTMiIGZpbGw9IiM3YTQ4MTgiLz4KPHJlY3QgeD0iOSIgeT0iOSIgd2lkdGg9IjE0IiBoZWlnaHQ9IjEwIiBmaWxsPSIjZjRjMDdhIi8+CjxyZWN0IHg9IjQiIHk9IjEzIiB3aWR0aD0iNCIgaGVpZ2h0PSI2IiBmaWxsPSIjZjRjMDdhIi8+CjxyZWN0IHg9IjI0IiB5PSIxMyIgd2lkdGg9IjQiIGhlaWdodD0iNiIgZmlsbD0iI2Y0YzA3YSIvPgo8cmVjdCB4PSI1IiB5PSIxNCIgd2lkdGg9IjMiIGhlaWdodD0iNCIgZmlsbD0iI2M4NzA0MCIvPgo8cmVjdCB4PSIyNSIgeT0iMTQiIHdpZHRoPSIzIiBoZWlnaHQ9IjQiIGZpbGw9IiNjODcwNDAiLz4KPHJlY3QgeD0iOSIgeT0iMTIiIHdpZHRoPSIxNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMTExMTExIi8+CjxyZWN0IHg9IjEwIiB5PSIxMyIgd2lkdGg9IjUiIGhlaWdodD0iNCIgZmlsbD0iIzExMTExMSIvPgo8cmVjdCB4PSIxNyIgeT0iMTMiIHdpZHRoPSI1IiBoZWlnaHQ9IjQiIGZpbGw9IiMxMTExMTEiLz4KPHJlY3QgeD0iMTAiIHk9IjEzIiB3aWR0aD0iNSIgaGVpZ2h0PSI0IiBmaWxsPSIjMDBmZmY1IiBvcGFjaXR5PSIwLjI1Ii8+CjxyZWN0IHg9IjE3IiB5PSIxMyIgd2lkdGg9IjUiIGhlaWdodD0iNCIgZmlsbD0iIzAwZmZmNSIgb3BhY2l0eT0iMC4yNSIvPgo8cmVjdCB4PSIxMCIgeT0iMTgiIHdpZHRoPSIxMiIgaGVpZ2h0PSI0IiBmaWxsPSIjMWEwODAwIi8+CjxyZWN0IHg9IjExIiB5PSIxOSIgd2lkdGg9IjEwIiBoZWlnaHQ9IjIiIGZpbGw9IiNmZmZmZmYiLz4KPC9zdmc+Cg==">
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -341,6 +342,43 @@
     text-align:center;
   }
 
+  /* SquachWatches in the Wild: the flasher's install count (2026-10-19). */
+  .wild{
+    margin:0 0 18px;
+    padding:12px 14px 10px;
+    border:1px dashed rgba(0,255,136,0.45);
+    border-radius:8px;
+    text-align:center;
+    display:grid; gap:4px;
+  }
+  .wild-label{
+    font-family:'VT323', monospace;
+    font-size:1.05rem;
+    letter-spacing:0.12em;
+    color:var(--vapor-pink);
+  }
+  .wild-count{
+    font-family:'Orbitron', 'VT323', monospace;
+    font-weight:900;
+    font-size:2.4rem;
+    line-height:1.05;
+    color:var(--green);
+    text-shadow:0 0 12px rgba(0,255,136,0.55), 0 0 2px #fff;
+    font-variant-numeric:tabular-nums;
+  }
+  .wild-count.bump{ animation:wildBump 0.9s ease-out; }
+  @keyframes wildBump{
+    0%{ transform:scale(1); color:var(--vapor-yellow); }
+    30%{ transform:scale(1.18); color:var(--vapor-yellow); }
+    100%{ transform:scale(1); color:var(--green); }
+  }
+  .wild-boards{
+    list-style:none; margin:4px 0 0; padding:0;
+    display:flex; flex-wrap:wrap; justify-content:center; gap:4px 12px;
+    font-family:'VT323', monospace; font-size:0.95rem; color:var(--vapor-blue);
+  }
+  .wild-boards b{ color:var(--text); font-weight:normal; }
+
   .board-picker-label{
     display:block;
     font-family:'VT323', monospace;
@@ -643,6 +681,39 @@
     font-size:0.8rem;
     color:#5a4a72;
   }
+
+  /* ---- the three steps: tiles, the advanced fold ---- */
+  .step{border-top:1px solid rgba(180,0,255,0.35);padding-top:14px;margin-top:16px}
+  .step:first-of-type{border-top:0;margin-top:0;padding-top:0}
+  .step-title{font-family:'VT323', monospace;font-size:1.35rem;letter-spacing:0.06em;color:var(--cyan);margin:0 0 10px;display:flex;align-items:center;gap:10px}
+  .step-num{display:inline-grid;place-items:center;width:1.6em;height:1.6em;border-radius:50%;background:var(--purple);color:#fff;font-size:1rem}
+  .tile-group{margin:12px 0 6px;font-family:'VT323', monospace;font-size:0.95rem;letter-spacing:0.08em;color:var(--vapor-pink)}
+  .tile-group.lab{color:var(--vapor-yellow)}
+  .lab-warn{margin:0 0 8px;font-size:13px;color:var(--vapor-yellow);opacity:.85}
+  .tile-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .tile{display:flex;flex-direction:column;gap:3px;text-align:left;cursor:pointer;padding:9px 10px;background:var(--bg);color:#fff;border:1px solid var(--purple);border-radius:8px;font-family:'Share Tech Mono', monospace;transition:border-color .15s, box-shadow .15s}
+  .tile:hover{border-color:var(--vapor-pink)}
+  .tile:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .tile[aria-checked="true"]{border-color:var(--cyan);box-shadow:0 0 14px rgba(0,255,245,0.35);background:rgba(0,255,245,0.06)}
+  .tile.lab{border-style:dashed;border-color:var(--vapor-yellow)}
+  .tile-name{font-family:'VT323', monospace;font-size:1.15rem;line-height:1.1;color:#fff}
+  .tile-code{font-size:12px;color:var(--vapor-blue);overflow-wrap:anywhere}
+  .tile-tag{align-self:flex-start;font-size:11px;padding:1px 6px;border-radius:4px;background:var(--purple);color:#fff;letter-spacing:.05em}
+  .tile-tag.new{background:var(--green);color:#000}
+  .tile-tag.lab{background:var(--vapor-yellow);color:#000}
+  .select-fallback{margin-top:14px}
+  .tiles-on .select-fallback{display:none}
+  .picked{margin:0 0 10px;font-family:'VT323', monospace;font-size:1.1rem;color:var(--vapor-yellow)}
+  .advanced{margin-top:14px;border:1px solid rgba(180,0,255,0.35);border-radius:8px;padding:8px 12px}
+  .advanced summary{cursor:pointer;font-family:'VT323', monospace;font-size:1.05rem;color:var(--vapor-blue);letter-spacing:.04em}
+  .advanced[open] summary{margin-bottom:10px}
+  .step .identify-row{display:grid;grid-template-columns:minmax(170px,auto) 1fr;gap:4px 12px;align-items:center;text-align:left;margin-top:10px}
+  .step .identify-row .identify-btn{width:100%}
+  .tool-desc{margin:0;font-size:13px;opacity:.8}
+  .step .identify-result{grid-column:1 / -1;margin-top:0;min-height:0}
+  .step .identify-result:empty{display:none}
+  @media (max-width:480px){.step .identify-row{grid-template-columns:1fr}}
+  .advanced .overclock-row.disabled{display:none}
 </style>
 </head>
 <body>
@@ -682,7 +753,24 @@
   <div class="card">
     <h2>FLASH YOUR DETECTOR</h2>
     <p class="version-note" id="versionNote">checking latest version&hellip;</p>
+    <!-- SquachWatches in the Wild: the count of installs from this page, from
+         tools/install-counter (count.squachwatch.com). Stays hidden if the
+         counter cannot be reached. -->
+    <div class="wild" id="wild" hidden>
+      <div class="wild-label">SQUACHWATCHES IN THE WILD</div>
+      <div class="wild-count" id="wildCount">0</div>
+      <ul class="wild-boards" id="wildBoards"></ul>
+    </div>
 
+    <section class="step" aria-labelledby="step1">
+      <h3 class="step-title" id="step1"><span class="step-num">1</span> PICK YOUR BOARD</h3>
+    <div class="board-finder">
+      <label class="board-picker-label" for="boardCode">Code on the back of your board (optional):</label>
+      <input class="board-code" id="boardCode" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ESP32-2432S032C">
+      <div class="board-code-answer" id="boardCodeAnswer" aria-live="polite"></div>
+    </div>
+    <!-- The version picker, up here on purpose (asked for 2026-10-15): it was
+         folded under Advanced and people thought the older builds were gone. -->
     <div class="version-row" id="versionRow" hidden>
       <label class="board-picker-label" for="versionSelect">Firmware version:</label>
       <select class="board-select" id="versionSelect" aria-label="Firmware version">
@@ -691,17 +779,23 @@
         On the latest build and stuck in a boot loop? Flash the one before it.
       </p>
     </div>
-
-    <div class="board-finder">
-      <label class="board-picker-label" for="boardCode">Code on the back of your board (optional):</label>
-      <input class="board-code" id="boardCode" type="text" autocomplete="off" spellcheck="false" placeholder="e.g. ESP32-2432S032C">
-      <div class="board-code-answer" id="boardCodeAnswer" aria-live="polite"></div>
-    </div>
-
-    <label class="board-picker-label" for="boardSelect">Select your board:</label>
+    <ul class="board-help">
+      <li><strong>Cheap Yellow Displays</strong> have a code like <strong>ESP32-2432S028R</strong> on the back. The last letter is the touch: <strong>R</strong> resistive (press), <strong>C</strong> capacitive (tap). Enter <strong>JC2432W328C</strong> to select the named DIYmalls option.</li>
+      <li><strong>Freenove</strong> boards say <strong>FNK0103</strong> or <strong>FNK0104</strong>.</li>
+      <li>Not on the list? Tell us what it is on <a href="https://github.com/skizzophrenic/SquachWatch-CYD/issues" target="_blank" rel="noopener">GitHub</a>.</li>
+    </ul>
+    <p class="white-screen-note" id="whiteScreenNote">
+      The 2.8&quot; CYD ships with one of two display drivers depending on the batch, and there's no way
+      to tell from the outside. Got a <strong>solid white screen</strong>? It's not broken: untick
+      <strong>80 MHz</strong> and flash again, and if it's still white, flash the other 2.8&quot; option above.
+    </p>
+      <div class="tiles" id="boardTiles" role="radiogroup" aria-label="Board"></div>
+      <div class="select-fallback">
+    <label class="board-picker-label" for="boardSelect">Or pick from the list:</label>
     <select class="board-select" id="boardSelect" aria-label="Board select">
       <optgroup label="CHEAP YELLOW DISPLAYS (CYD)">
-      <option value="./manifest-cyd.json" data-cyd28="1" data-fast="./manifest-cyd-fast.json" data-fastdefault="1" selected>2.8&quot; CYD &middot; ST7789 &mdash; ESP32-2432S028R, the usual screen</option>
+      <option value="./manifest-cyd.json" data-board-id="cyd-st7789" data-cyd28="1" data-fast="./manifest-cyd-fast.json" data-fastdefault="1" selected>2.8&quot; CYD &middot; ST7789 &mdash; ESP32-2432S028R, the usual screen</option>
+      <option value="./manifest-cyd.json" data-board-id="diymalls-jc2432w328c" data-fast="./manifest-cyd-fast.json" data-fastdefault="1">DIYmalls 2.8&quot; &mdash; JC2432W328C (Capacitive)</option>
       <option value="./manifest-cyd-ili9341.json" data-cyd28="1" data-fast="./manifest-cyd-ili9341-fast.json" data-ocdesc="This screen usually can’t keep up at 80 MHz. Leave it unticked unless you want to try your luck.">2.8&quot; CYD &middot; ILI9341 &mdash; ESP32-2432S028R, older screen</option>
       <option value="./manifest-freenove32.json">3.2&quot; &middot; resistive &mdash; Freenove FNK0103</option>
       <option value="./manifest-cyd32c.json" data-ocnote="The 3.2&quot; capacitive already ships at 80MHz.">3.2&quot; &middot; capacitive &mdash; ESP32-2432S032C (NEW)</option>
@@ -713,11 +807,14 @@
       <option value="./manifest-rlphantom-r.json">RL Phantom 2.4&quot; &mdash; ESP32-2432S024R</option>
       </optgroup>
       <optgroup label="ESP32-S3 BOARDS">
-      <option value="./manifest-freenove-s3.json">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
+      <option value="./manifest-freenove-s3-40mhz.json" data-fast="./manifest-freenove-s3.json" data-fastdefault="1" data-ocdesc="On by default for this board. If the screen shows torn or jumbled lines, untick it for the 40 MHz build and flash again.">Freenove ESP32-S3 2.8&quot; &mdash; FNK0104 (BETA)</option>
+      <option value="./manifest-freenove-s3-35.json">Freenove ESP32-S3 3.5&quot; &mdash; FNK0104N (BETA)</option>
       <option value="./manifest-crowpanel7.json">Elecrow CrowPanel 7&quot; &mdash; CrowPanel Advance 7.0 (BETA)</option>
+      <option value="./manifest-tdeck-plus.json" data-ocnote="The T-Deck's screen runs at 40MHz; there is no other build.">LilyGo T-Deck Plus &mdash; ESP32-S3, keyboard + GPS (BETA)</option>
       </optgroup>
       <optgroup label="ESP32-C5 BOARDS">
       <option value="./manifest-nm-cyd-c5.json" data-ocnote="The C5 runs its panel at its own full speed; there is no slower build.">RockBase NM-CYD-C5 2.8&quot; &mdash; ESP32-C5, RISC-V (BETA)</option>
+      <option value="./manifest-marauder-v8.json" data-ocnote="The V8's ILI9341 runs at 40MHz, the fastest it draws clean; there is no other build.">Marauder V8 &mdash; ESP32-C5, GPS + battery (BETA)</option>
       </optgroup>
       <optgroup label="M5STACK">
       <option value="./manifest-sticks3.json" data-ocnote="The StickS3 runs its screen at its own full speed; there is no slower build.">M5Stack StickS3 &mdash; 1.14&quot; landscape, two buttons (BETA)</option>
@@ -727,28 +824,12 @@
       <option value="./manifest-twatch-s3.json">LilyGo T-Watch S3 / S3 Plus (BETA)</option>
       </optgroup>
     </select>
-    <p class="white-screen-note" id="whiteScreenNote">
-      The 2.8&quot; CYD ships with one of two display drivers depending on the batch, and there\'s no way
-      to tell from the outside. Got a <strong>solid white screen</strong>? It\'s not broken: untick
-      <strong>80 MHz</strong> and flash again, and if it\'s still white, flash the other 2.8&quot; option above.
-    </p>
-    <ul class="board-help">
-      <li><strong>Cheap Yellow Displays</strong> have a code like <strong>ESP32-2432S028R</strong> on the back. The last letter is the touch: <strong>R</strong> resistive (press), <strong>C</strong> capacitive (tap).</li>
-      <li><strong>Freenove</strong> boards say <strong>FNK0103</strong> or <strong>FNK0104</strong>.</li>
-      <li>Not on the list? Tell us what it is on <a href="https://github.com/skizzophrenic/SquachWatch-CYD/issues" target="_blank" rel="noopener">GitHub</a>.</li>
-    </ul>
+      </div>
+    </section>
 
-    <label class="overclock-row" id="overclockRow">
-      <input type="checkbox" id="overclockChk">
-      <span>
-        <span class="oc-title">80 MHz screen (faster)</span>
-        <span class="oc-desc" id="overclockDesc">
-          About 34 frames a second instead of 20. If the screen stays white or shows torn lines,
-          untick this and flash again.
-        </span>
-      </span>
-    </label>
-
+    <section class="step" aria-labelledby="step2">
+      <h3 class="step-title" id="step2"><span class="step-num">2</span> INSTALL</h3>
+      <p class="picked" id="pickedLine"></p>
     <esp-web-install-button id="installBtn" manifest="./manifest-cyd.json">
       <button slot="activate" class="install-btn">[ CONNECT &amp; INSTALL ]</button>
       <span slot="unsupported" class="unsupported">
@@ -760,32 +841,52 @@
         This page needs to be loaded over HTTPS to flash a device.
       </span>
     </esp-web-install-button>
-
     <ol class="steps">
       <li>Plug your SquachWatch-CYD into this computer over USB.</li>
       <li>Click <strong>Connect &amp; Install</strong> above.</li>
       <li>Pick the right serial port from the browser's popup.</li>
       <li>Click Install and leave it be — don't unplug until it says done.</li>
     </ol>
-
     <p class="browser-note">Works in Firefox / Chrome / Edge / Brave on desktop. No app to install — just the browser.</p>
+      <details class="advanced">
+        <summary>Advanced: overclock</summary>
+    <label class="overclock-row" id="overclockRow">
+      <input type="checkbox" id="overclockChk">
+      <span>
+        <span class="oc-title">80 MHz screen (faster)</span>
+        <span class="oc-desc" id="overclockDesc">
+          About 34 frames a second instead of 20. If the screen stays white or shows torn lines,
+          untick this and flash again.
+        </span>
+      </span>
+    </label>
+      </details>
+    </section>
 
+    <section class="step" aria-labelledby="step3">
+      <h3 class="step-title" id="step3"><span class="step-num">3</span> AFTER INSTALLING</h3>
     <div class="identify-row">
       <button id="identifyBtn" class="identify-btn">[ IDENTIFY MY BOARD ]</button>
+      <p class="tool-desc">Reads the board over USB and says which build it runs.</p>
       <div class="identify-result" id="identifyResult"></div>
     </div>
     <div class="identify-row">
       <button id="clockBtn" class="identify-btn">[ SET TIME &amp; ZONE ]</button>
+      <p class="tool-desc">Sends this computer's clock and time zone to the board.</p>
       <div class="identify-result" id="clockResult"></div>
     </div>
     <div class="identify-row">
       <button id="wigleBtn" class="identify-btn">[ DOWNLOAD WIGLE FILE ]</button>
+      <p class="tool-desc">T-Watch S3 Plus with WARDRIVE on: saves its log for WiGLE.</p>
       <div class="identify-result" id="wigleResult"></div>
     </div>
+      <details class="advanced">
+        <summary>More about these tools</summary>
     <p class="browser-note"><strong>Download WiGLE File</strong> is for a T-Watch S3 Plus with WARDRIVE on (WATCH SETTINGS): it saves every network and device the watch logged, with where, as a WiGLE file you can upload at <a href="https://wigle.net/uploads" target="_blank" rel="noopener">wigle.net/uploads</a>. The log stays on the watch until you clear it.</p>
     <p class="browser-note">After flashing, <strong>Set Time &amp; Zone</strong> tells the board this computer's clock and time zone over the same cable. The zone is kept for good; the clock lasts until the board is unplugged, and a saved WiFi network puts it back at every boot. A T-Watch has its clock set for it after installing, and keeps the time from then on, even through a flat battery.</p>
+      </details>
+    </section>
   </div>
-
   <div class="legend-section">
     <h2 class="legend-title">&gt;&gt; WHAT IT DETECTS &lt;&lt;</h2>
     <div class="legend-grid">
@@ -1400,6 +1501,82 @@
     "Boom. Go find some cameras.",
   ];
 
+  // ---- SquachWatches in the Wild ----------------------------------------
+  // One POST to count.squachwatch.com when an install finishes, naming the
+  // board (from the install button's manifest); nothing else is sent. The
+  // page shows the running total and the five boards seen most.
+  (function () {
+    var API = 'https://count.squachwatch.com';
+    var NAMES = {
+      'cyd': '2.8" CYD', 'cyd-fast': '2.8" CYD', 'cyd-ili9341': '2.8" CYD', 'cyd-ili9341-fast': '2.8" CYD',
+      'freenove32': '3.2" Freenove', 'cyd32c': '3.2" CYD', 'cyd35-fast': '3.5" CYD', 'cyd35c-fast': '3.5" CYD',
+      'awok': 'AWOK', 'rlphantom-r': 'RL Phantom',
+      'freenove-s3': 'Freenove S3 2.8"', 'freenove-s3-35': 'Freenove S3 3.5"', 'crowpanel7': 'CrowPanel 7"',
+      'tdeck-plus': 'T-Deck', 'nm-cyd-c5': 'NM-CYD-C5', 'marauder-v8': 'Marauder V8',
+      'sticks3': 'StickS3', 'cardputer-adv': 'Cardputer', 'twatch-s3': 'T-Watch', 'tab5': 'Tab5'
+    };
+    var box = document.getElementById('wild');
+    var countEl = document.getElementById('wildCount');
+    var boardsEl = document.getElementById('wildBoards');
+    var shown = 0;
+    if (!box || !countEl) return;
+
+    function fmt(n) { return Math.round(n).toLocaleString('en-US'); }
+    function countTo(target) {
+      var from = shown, start = null, dur = shown ? 600 : 1400;
+      function step(t) {
+        if (start === null) start = t;
+        var k = Math.min(1, (t - start) / dur);
+        var e = 1 - Math.pow(1 - k, 3);
+        countEl.textContent = fmt(from + (target - from) * e);
+        if (k < 1) requestAnimationFrame(step); else shown = target;
+      }
+      requestAnimationFrame(step);
+    }
+    function render(d) {
+      if (!d || typeof d.total !== 'number') return;
+      box.hidden = false;
+      countTo(d.total);
+      // Board families, merged by shown name, most first.
+      var fam = {};
+      Object.keys(d.boards || {}).forEach(function (k) {
+        var n = NAMES[k]; if (!n) return;
+        fam[n] = (fam[n] || 0) + d.boards[k];
+      });
+      var top = Object.keys(fam).sort(function (a, b) { return fam[b] - fam[a]; }).slice(0, 5);
+      boardsEl.innerHTML = '';
+      top.forEach(function (n) {
+        var li = document.createElement('li');
+        var b = document.createElement('b'); b.textContent = n;
+        li.appendChild(b); li.appendChild(document.createTextNode(' ' + fmt(fam[n])));
+        boardsEl.appendChild(li);
+      });
+    }
+    fetch(API + '/', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(render)
+      .catch(function () { /* no counter: the box stays hidden */ });
+
+    window.squachWildHit = function () {
+      var btn = document.getElementById('installBtn');
+      var mf = btn ? (btn.getAttribute('manifest') || '') : '';
+      var m = mf.match(/manifest-(?:lab-)?([a-z0-9-]+)\.json$/);
+      if (!m) return;
+      fetch(API + '/hit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: m[1] })
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          render(d);
+          countEl.classList.remove('bump'); void countEl.offsetWidth; countEl.classList.add('bump');
+        })
+        .catch(function () {});
+    };
+  })();
+
   function watchInstallDialog(dialog) {
     var wasInstalling = false;
     try {
@@ -1408,6 +1585,7 @@
         if (state === 'INSTALL' || state === 'ASK_ERASE') wasInstalling = true;
         if (state === 'DASHBOARD' && wasInstalling) {
           wasInstalling = false;
+          if (window.squachWildHit) window.squachWildHit();
           if (phase === 'auto') {
             mode = 'dance';
             moving = false;
@@ -1474,11 +1652,12 @@
         ['./manifest-lab-cyd.json', './manifest-lab-cyd-fast.json',
          './manifest-lab-cyd-ili9341.json', './manifest-lab-cyd-ili9341-fast.json',
          './manifest-lab-rlphantom-r.json', './manifest-lab-freenove32.json',
-         './manifest-lab-twatch-s3.json', './manifest-lab-freenove-s3.json',
+         './manifest-lab-twatch-s3.json', './manifest-lab-freenove-s3.json', './manifest-lab-freenove-s3-35.json',
          './manifest-lab-crowpanel7.json', './manifest-lab-cyd32c.json',
-         './manifest-lab-cyd35-fast.json', './manifest-lab-nm-cyd-c5.json',
+         './manifest-lab-cyd35-fast.json', './manifest-lab-nm-cyd-c5.json', './manifest-lab-marauder-v8.json',
          './manifest-lab-cyd35c-fast.json', './manifest-lab-sticks3.json',
-         './manifest-lab-cardputer-adv.json'].forEach(function (path) {
+         './manifest-lab-cardputer-adv.json', './manifest-lab-tdeck-plus.json',
+         './manifest-lab-tab5.json'].forEach(function (path) {
           fetch(path, { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (m) {
@@ -1628,6 +1807,7 @@
     var codeIn = document.getElementById('boardCode');
     var codeOut = document.getElementById('boardCodeAnswer');
     var CODES = [
+      { re: /JC2432W328C/,           boardId: 'diymalls-jc2432w328c',   say: 'That’s the DIYmalls 2.8" (JC2432W328C), with capacitive touch. Selected its ST7789 build.' },
       { re: /2432S028/,             v: './manifest-cyd.json',         say: 'That’s the 2.8" CYD. If the screen goes white, untick 80 MHz first; still white, pick the ILI9341 one.' },
       { re: /E32R28|32E.*240X320|32E.*2\.8|2\.8.*32E/, v: './manifest-cyd-ili9341.json', say: 'That’s the ESP32-32E 2.8" (E32R28T): the 2.8" CYD’s ILI9341 build. Selected below; leave the overclock box unticked.' },
       { re: /E32R35|32E.*320X480|32E.*3\.5|3\.5.*32E/, v: './manifest-cyd35-fast.json', say: 'That’s the ESP32-32E 3.5" (E32R35T), the 3.5" resistive (BETA). Selected below.' },
@@ -1639,9 +1819,11 @@
       { re: /2432S024R/,            v: './manifest-rlphantom-r.json', say: 'That’s the RL Phantom 2.4". Selected below.' },
       { re: /2432S024C/,            v: null,                          say: 'The capacitive 2.4" isn’t on the flasher yet.' },
       { re: /AWOK|MARAUDER/,        v: './manifest-awok.json',        say: 'That’s the AWOK 2.4". Selected below.' },
-      { re: /FNK0?104/,             v: './manifest-freenove-s3.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
+      { re: /FNK0?104N/,            v: './manifest-freenove-s3-35.json', say: 'That’s the Freenove ESP32-S3 3.5" (BETA). Selected below.' },
+      { re: /FNK0?104/,             v: './manifest-freenove-s3-40mhz.json', say: 'That’s the Freenove ESP32-S3 2.8" (BETA). Selected below.' },
       { re: /CROWPANEL|CROW/,       v: './manifest-crowpanel7.json',  say: 'That’s the CrowPanel 7" (BETA). Selected below.' },
       { re: /T-?WATCH/,             v: './manifest-twatch-s3.json',   say: 'That’s a T-Watch S3 (BETA). Selected below.' },
+      { re: /T-?DECK/,              v: './manifest-tdeck-plus.json',  say: 'That’s the LilyGo T-Deck Plus (BETA). Selected below.' },
       { re: /STICK-?S3|K150/,       v: './manifest-sticks3.json',     say: 'That’s the M5Stack StickS3 (BETA). Selected below.' },
       { re: /CARDPUTER.*ADV/,       v: './manifest-cardputer-adv.json', say: 'That’s the Cardputer ADV (BETA). Selected below.' },
       { re: /CARDPUTER/,            v: null,                          say: 'Only the Cardputer ADV is on the flasher. The original Cardputer has a different keyboard and is not supported yet.' }
@@ -1652,7 +1834,18 @@
       if (v.length < 4) { codeOut.textContent = ''; return; }
       for (var i = 0; i < CODES.length; i++) {
         if (!CODES[i].re.test(v)) continue;
-        if (CODES[i].v) { select.value = CODES[i].v; applySelection('board'); }
+        if (CODES[i].boardId) {
+          // Two named boards may intentionally share one firmware manifest.
+          // Select by option identity so this lookup does not fall back to
+          // the first option with the same value (the generic CYD entry).
+          for (var j = 0; j < select.options.length; j++) {
+            if (select.options[j].dataset.boardId === CODES[i].boardId) {
+              select.selectedIndex = j;
+              applySelection('board');
+              break;
+            }
+          }
+        } else if (CODES[i].v) { select.value = CODES[i].v; applySelection('board'); }
         else codeOut.className = 'board-code-answer warn';
         codeOut.textContent = CODES[i].say;
         return;
@@ -2024,6 +2217,100 @@
     }
   }
   setInterval(draw, 60);
+})();
+</script>
+
+<script>
+// Board tiles drawn from the <select>, which stays the one source
+// of truth -- every existing handler (the code box, versions, overclock,
+// lab builds) keeps working on it, and a tile only sets it and says so.
+(function () {
+  var select = document.getElementById('boardSelect');
+  var host = document.getElementById('boardTiles');
+  var picked = document.getElementById('pickedLine');
+  if (!select || !host) return;
+  document.querySelector('.card').classList.add('tiles-on');
+
+  function parts(text) {
+    var t = text.replace(/\s+/g, ' ').trim(), tag = '';
+    var m = t.match(/\((BETA|NEW)\)\s*$/);
+    if (m) { tag = m[1]; t = t.slice(0, m.index).trim(); }
+    var d = t.split(' \u2014 ');
+    return { name: d[0], code: d.slice(1).join(' \u2014 '), tag: tag };
+  }
+
+  function render() {
+    host.textContent = '';
+    var groups = [], byLabel = {};
+    Array.prototype.forEach.call(select.options, function (o) {
+      var lab = /manifest-lab-/.test(o.value);
+      var label = lab ? 'TEST BUILDS' : (o.parentNode.tagName === 'OPTGROUP' ? o.parentNode.label : 'OTHER');
+      if (!byLabel[label]) { byLabel[label] = []; groups.push(label); }
+      byLabel[label].push(o);
+    });
+    groups.forEach(function (label) {
+      var lab = label === 'TEST BUILDS';
+      var h = document.createElement('div');
+      h.className = 'tile-group' + (lab ? ' lab' : '');
+      h.textContent = label;
+      host.appendChild(h);
+      if (lab) {
+        var w = document.createElement('p');
+        w.className = 'lab-warn';
+        w.textContent = 'Unreleased builds for testing. They may be broken; the normal list above is the safe choice.';
+        host.appendChild(w);
+      }
+      var row = document.createElement('div');
+      row.className = 'tile-row';
+      byLabel[label].forEach(function (o) {
+        var optionIndex = Array.prototype.indexOf.call(select.options, o);
+        var p = parts(o.textContent);
+        if (lab) {
+          // "LAB Small-Screens -- SquachWatch-CYD (M5Stack StickS3)  (lab-small-screens)"
+          // reads as the board, with the build's name under it.
+          var t = o.textContent.replace(/\s+/g, ' ').trim();
+          var m = t.match(/^LAB (.*?) -- SquachWatch-CYD \((.*?)\)(?: \(lab-[^)]*\))?$/);
+          if (m) { p.name = m[2]; p.code = m[1] + ' test build'; }
+          else   { p.name = t.replace(/^LAB\s+/, ''); }
+          p.tag = 'TEST';
+        }
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tile' + (lab ? ' lab' : '');
+        b.setAttribute('role', 'radio');
+        b.dataset.value = o.value;
+        b.dataset.optionIndex = String(optionIndex);
+        var n = document.createElement('span'); n.className = 'tile-name'; n.textContent = p.name; b.appendChild(n);
+        if (p.code) { var c = document.createElement('span'); c.className = 'tile-code'; c.textContent = p.code; b.appendChild(c); }
+        if (p.tag) { var g = document.createElement('span'); g.className = 'tile-tag ' + p.tag.toLowerCase(); g.textContent = p.tag; b.appendChild(g); }
+        b.addEventListener('click', function () {
+          if (select.selectedIndex === optionIndex) return;
+          select.selectedIndex = optionIndex;
+          select.dispatchEvent(new Event('change'));
+          sync();
+        });
+        row.appendChild(b);
+      });
+      host.appendChild(row);
+    });
+    sync();
+  }
+
+  var last = null;
+  function sync() {
+    last = select.selectedIndex;
+    Array.prototype.forEach.call(host.querySelectorAll('.tile'), function (b) {
+      b.setAttribute('aria-checked', Number(b.dataset.optionIndex) === select.selectedIndex ? 'true' : 'false');
+    });
+    var o = select.options[select.selectedIndex];
+    if (picked) picked.textContent = o ? ('Installing for: ' + parts(o.textContent).name) : '';
+  }
+
+  render();
+  // Lab builds arrive later, from a fetch; the code box changes the select
+  // without an event. One cheap look a third of a second covers both.
+  new MutationObserver(render).observe(select, { childList: true, subtree: true });
+  setInterval(function () { if (select.selectedIndex !== last) sync(); }, 300);
 })();
 </script>
 </body>

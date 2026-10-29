@@ -32,15 +32,45 @@ class TFT_eSPI;
 // so the condition is simply "a board", and a new one inherits it: the push
 // is the library's own transaction with the waiting put to use, and it
 // declines any frame whose shape it does not recognise rather than guessing.
-// Not on an ESP32-S3 yet (SQW_S3: the T-Watch and the Freenove S3): the
-// overlapped push talks to the ESP32 SPI registers, and the S3 lays them out
-// differently -- the first frame through it came out white. pushSprite()
-// until it is ported. And not on the CrowPanel 7, which has no SPI display at
-// all: CrowBlit writes rows into its RGB framebuffer (crowpanel7_blit.h).
-#if defined(ARDUINO_ARCH_ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7)
-  #define SQW_FRAME_PUSH 1
+// The ESP32-S3 boards do not get the register push: it talks to the ESP32's
+// SPI registers, and the S3 lays them out differently -- the first frame
+// through it came out white. The Freenove S3 takes the C5's other route
+// instead (SQW_PUSH_DMA_ONLY): the same row hashing and spans, but every
+// span goes out by the IDF driver's DMA from bounce buffers, in a task of
+// its own while the loop draws the next frame, and no register is touched
+// by hand -- the library's own end-of-transfer callback puts the engine
+// back the way its register writes expect. The T-Watch, StickS3 and
+// Cardputer stay on pushSprite() until each has been measured on that
+// route. And not the CrowPanel 7, which has no SPI display at all: CrowBlit
+// writes rows into its RGB framebuffer (crowpanel7_blit.h).
+#if defined(ARDUINO_ARCH_ESP32) && defined(FREENOVE_S3_35)
+  // The Freenove 3.5": no SPI panel at all. The same hashing, spans and
+  // push task, but every span goes to the ST77922 over its four-lane QSPI
+  // bus, with the rotation done as each chunk converts (st77922_qspi.h).
+  #define SQW_FRAME_PUSH    1
+  #define SQW_PUSH_DMA_ONLY 1
+  #define SQW_PUSH_QSPI     1
+#elif defined(ARDUINO_ARCH_ESP32) && (defined(FREENOVE_S3) || defined(TDECK_PLUS))
+  // The T-Deck Plus takes the Freenove S3's route: the same chip, an SPI
+  // panel, and pushSprite() cost it 40 of every 48 ms (measured 2026-10-12).
+  #define SQW_FRAME_PUSH    1
+  #define SQW_PUSH_DMA_ONLY 1
+  #define SQW_PUSH_QSPI     0
+#elif defined(ARDUINO_ARCH_ESP32) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(TAB5)
+  #define SQW_FRAME_PUSH    1
+  #define SQW_PUSH_DMA_ONLY 0
+  #define SQW_PUSH_QSPI     0
 #else
-  #define SQW_FRAME_PUSH 0
+  #define SQW_FRAME_PUSH    0
+  #define SQW_PUSH_DMA_ONLY 0
+  #define SQW_PUSH_QSPI     0
+#endif
+// The push in a task of its own, reading one frame while the loop draws
+// into another: main.cpp's second buffer and asyncSubmit() below.
+#if defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
+  #define SQW_PUSH_ASYNC 1
+#else
+  #define SQW_PUSH_ASYNC 0
 #endif
 
 namespace FramePush {
@@ -156,7 +186,14 @@ bool asyncBegin(TFT_eSPI& tft);
 bool asyncSubmit(const uint8_t* src, int32_t w, int32_t h, int32_t x, int32_t y);
 void asyncWait();                 // until the panel holds the last frame handed over
 bool asyncOn();
+// Before busLock() from something that cannot wait a whole frame (the LoRa
+// radio): a push in flight finishes its current chunk and steps aside.
+void busWant();
 void busLock();
 void busUnlock();
+// Whether the panel's device holds the IDF driver's bus right now (a frame in
+// flight, the radio let in between its chunks). A caller that needs that hold
+// for a register-fed transfer takes one only when this is false.
+bool pushHoldsBus();
 
 }  // namespace FramePush

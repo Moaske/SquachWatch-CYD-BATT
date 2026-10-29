@@ -108,8 +108,26 @@ bool   ready();
 // place a frame off the air is decoded exactly once -- decode() also runs for
 // every row the LIST and CHANS views redraw, so a call from a screen would
 // record the refresh rate.
+//
+// `key` is the message's identity on the air, and a key already held from the
+// last SEEN_MS is a copy, not a message: dropped. Both networks flood, so one
+// message reaches here once from its sender and again from every relay in
+// earshot -- and our OWN sends come back the same way, which is how a sent
+// line used to show up twice in the chat (owners, 2026-10-14). 0 = no identity,
+// never merged. meshtasticKey() and meshCoreKey() make them.
 void note(Proto p, uint8_t chan, uint8_t port, const char* sender, uint64_t senderId, const char* text,
-          const Packet& pk, uint32_t now, bool direct, uint8_t hops);
+          const Packet& pk, uint32_t now, bool direct, uint8_t hops, uint32_t key = 0);
+// Meshtastic: the sender's node number and its packet id, which every relay
+// keeps. MeshCore: no id travels in a group message, so the sender's claimed
+// name, its own timestamp and the text -- the same three every relay carries.
+uint32_t meshtasticKey(uint32_t from, uint32_t packetId);
+uint32_t meshCoreKey(const char* sender, const char* text, uint32_t timestamp);
+static const uint32_t SEEN_MS = 10u * 60u * 1000u;
+
+// A sender's name learned after its messages arrived (a Meshtastic NodeInfo
+// comes every few hours): every held message from that network and sender id
+// takes the new name. Returns how many rows changed.
+uint16_t renameSender(Proto p, uint64_t senderId, const char* sender);
 
 // How many are held in total, and how many have been pushed out since boot.
 uint16_t count();

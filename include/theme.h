@@ -5,6 +5,8 @@
 #include <TFT_eSPI.h>
 #include "state.h"
 
+namespace Settings { enum class FontKind : uint8_t; }
+
 class DetectionEngine;
 
 namespace Theme {
@@ -108,6 +110,9 @@ namespace Theme {
 
     // Linear blend between two RGB565 colors. t is 0..256 (8.8 fixed).
     uint16_t blend(uint16_t a, uint16_t b, uint16_t t);
+    // Sine in whole numbers: a 16-bit turn in, -256..256 out. For the boards
+    // with no floating-point unit (the ESP32-C5s); costs the others nothing.
+    int isin256(uint16_t a);
     // Black or white, whichever reads on `fill`. A selected button or tab is
     // filled with PURPLE and used to keep a white label whatever the theme;
     // GH0ST's PURPLE is near white, and three other themes' are pale enough
@@ -135,7 +140,12 @@ namespace Theme {
     static const int TITLE_ICON_W      = 28;
     static const int TITLE_ICON_BAND_H = 20;
     static const int LIST_TOP       = 16;   // under the corner icons
-    static const int LIST_HEADING_H = 14;   // the Settings group header's height
+    // The Settings group header's height: 14, or 20 on the large panels,
+    // whose heading is set at size 2 (drawListHeading).
+    int listHeadingH();
+    // Where text in the current font sits to share the heading's line: a
+    // count or a status at the far end of it.
+    int listHeadingY(TFT_eSPI& t);
     static const int PINNED_BACK_H  = 26;
     // ...and how tall it actually is on THIS panel. The strip is the bottom
     // button on every menu screen, and those rows draw a size bigger on a
@@ -157,8 +167,32 @@ namespace Theme {
     bool stillBackdrop(TFT_eSPI& t);
     void setCompact(bool on);
     bool compact();
+    // A panel 320 or more on its SHORT side: the 3.5" boards, 480x320 either
+    // way up. The chrome that was drawn for 320x240 -- the XP tiles, his
+    // bubble, the pets -- is drawn larger there, because at the same pixel
+    // size it reads as half the size on the bigger glass. Set once at boot.
+    void setLarge(bool on);
+    bool large();
     int  listRowPad();          // added to the font height for a list row
     void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color);
+
+    // The face for running text: paragraphs, captions, status lines. On the
+    // large panels the 6x8 system font at size 1 reads at half its size on
+    // the 2.8", so there it becomes font 2 -- the bubble's 16-row face, about
+    // as wide per letter, so a wrap fits nearly the same words to a line.
+    // Everywhere else it is the system font at size 1, exactly as before.
+    // Line heights must come from fontHeight() after this, never a literal.
+    void bodyFontOn(TFT_eSPI& t);
+    void bodyFontOff(TFT_eSPI& t);
+    // A vertical distance laid out for the system font's 12-pixel lines,
+    // stretched to the body font's 19 on the large panels; unchanged on the
+    // rest. For the screens that place their lines at y + 12, y + 24, ...
+    int bodyY(int px);
+    // A dialog button's height, one step taller on the large panels.
+    int dialogBtnH(int base);
+    // A headline's text size (digits, YOU'RE IN, a title), one step up on
+    // the large panels. Always with the system font, never font 2.
+    uint8_t upSize(uint8_t base);
 
     // The face speech bubbles are set in. Chosen at compile time by
     // BUBBLE_FONT: 2 is TFT_eSPI's built-in 16-row font, anything else is a
@@ -234,7 +268,8 @@ namespace Theme {
     // Keyed on the WIDTH a line actually has, not on which board it is: the
     // 3.5" in portrait is 320 wide, the same as the 2.8" in landscape, and
     // should read the same there. Every narrower panel gets `base` back and
-    // nothing about it changes.
+    // nothing about it changes. The large panels (Theme::large()) step up in
+    // portrait as well: 320 wide there, but the same 3.5" glass.
     uint8_t uiTextSize(TFT_eSPI& t, uint8_t base);
 
     // Menu and list rows. These are already drawn at size 2 everywhere, and
@@ -244,7 +279,61 @@ namespace Theme {
     // long-standing habit so drawing and hit-testing cannot drift, which
     // means the rows get taller by themselves and the targets grow with the
     // letters. Narrow panels get 2 back and nothing about them moves.
+    // MENUS moves it a size either way (1 to 4).
     uint8_t uiMenuTextSize(TFT_eSPI& t);
+
+    // ---- FONTS (Settings > APPEARANCE > FONTS) ----
+    // Each kind of text is a step from the size the board was built with:
+    // -2..+2, a slider on the FONTS page. Only the faces every board has are
+    // used (the 6x8 system font at whole sizes, and font 2), so fontRange()
+    // says how far each kind can actually go on this panel; consumers clamp
+    // the stored step to what they can draw.
+    //   MENUS    list and settings rows, the BACK strip (uiMenuTextSize)
+    //   TEXT     the body font, headings, upSize(): down to the 2.8in's
+    //            sizes on the large panels, never up -- ~70 layouts place
+    //            their lines for the size they were built with
+    //   BUTTONS  drawButton() and drawWin95Button() labels, measured
+    //            against their boxes
+    //   BUBBLES  his speech bubble and the pets' balloons
+    //   XP_TILES the counter tiles' scale, 1x or 2x (xpTileScale())
+    //   PETS     the pets' balloons (petFontOn())
+    // MENUS, BUTTONS, BUBBLES and PETS also take a face: PIXEL (the 6x8 system
+    // font) or SMOOTH (font 2), the two every board has. Until one is picked
+    // each keeps the face it was built with.
+    int8_t      fontDelta(Settings::FontKind k);
+    bool        fontHasFace(Settings::FontKind k);
+    bool        fontSmooth(Settings::FontKind k);          // the face in use, picked or as built
+    void        toggleFontFace(Settings::FontKind k);      // PIXEL <-> SMOOTH
+    int         xpTileScale();
+    void        fontRange(TFT_eSPI& t, Settings::FontKind k, int8_t& lo, int8_t& hi);
+    void        setFontDelta(TFT_eSPI& t, Settings::FontKind k, int step);   // clamped to fontRange()
+    const char* fontStepName(int8_t step);
+    // A settings or list row's face: the system font at uiMenuTextSize(), or
+    // for a narrow (portrait) row the smaller face it always used, both moved
+    // by MENUS. menuFontSmaller() steps down one size for a row too long for
+    // the screen; false when there is nothing smaller.
+    void menuFontOn(TFT_eSPI& t, bool narrow);
+    // A menu face asked for as the system font at `size`, in MENUS' face.
+    void menuFontSized(TFT_eSPI& t, int size);
+    bool menuFontSmaller(TFT_eSPI& t);
+    // The sub-lists (POWER SAVER, STATUS LIGHT, SECURITY): their rows' system
+    // font size, 2 (1 when compact) moved by MENUS, stepped back down where a
+    // bigger label and value would not fit across w.
+    void subListTextSize(TFT_eSPI& t, bool compact, const char* label, const char* value, int w);
+    // His speech bubble. `small` is the boot splash's 2.8in-sized bubble,
+    // which no step moves. speechFontOn() picks the face; the rest answer for
+    // the face it picked, and speechFontSmaller() steps down one (for a
+    // bigger bubble that would run out of lines).
+    void speechFontOn(TFT_eSPI& t, bool small);
+    bool speechAboveNormal();
+    void speechFontSmaller(TFT_eSPI& t);
+    int  speechScale();
+    int  speechTextH();
+    int  speechAscent();
+    // The pets' balloons: the face and size PETS asks for, and one smaller
+    // for a line too wide for the panel (false when there is nothing smaller).
+    void petFontOn(TFT_eSPI& t);
+    bool petFontSmaller(TFT_eSPI& t);
 
     void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
                     const char* label, bool pressed, uint8_t textSize = 1);
@@ -275,8 +364,16 @@ namespace Theme {
     // A keyboard key in the payphone's steel: the message board and the
     // WiFi password board share it. `lit` is the key under the finger.
     void drawSteelKey(TFT_eSPI& t, int x, int y, int w, int h, bool lit);
+    // bold: the label struck twice, a pixel apart (the alert's IGNORE).
     void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
-                         const char* label, bool sunken);
+                         const char* label, bool sunken, bool bold = false);
+
+    // A Win95 dialog window, as System Properties draws one: the raised
+    // frame, a navy title bar carrying `title` in font 2 with a close box at
+    // its end, and the grey face inside. Returns the first row under the
+    // title bar. Text inside goes black on W95_FACE. The close box is
+    // decoration: the dialog's own buttons are the way out.
+    int drawWin95Window(TFT_eSPI& t, int x, int y, int w, int h, const char* title);
 
     // Bottom [SCAN][LOG][DESK] button bar, laid out from the current
     // screen width/height so it adapts to any rotation (landscape or
@@ -526,6 +623,9 @@ namespace Theme {
     // consume-once contract as the three above; main.cpp turns it into the
     // PARKA unlock.
     bool consumeLodgeKnock();
+    // True once, after three knocks on the igloo that goes by in the SNOWFALL
+    // snow. Same contract; main.cpp turns it into Squachy::unlockMeaty().
+    bool consumeIglooKnock();
     // True once, after the owl on the FIRE background was tapped while asking
     // WHAT REEKS?! (every third time he speaks). main.cpp turns it into
     // Squachy::unlockShambler().
@@ -673,6 +773,9 @@ namespace Theme {
     // losing the rest of the sentence.
     uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
                      char lines[][48], uint8_t maxLines);
+    // The same, 80 letters to a row: running text on the large panels.
+    uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
+                     char lines[][80], uint8_t maxLines);
 
     // Modal "MORE INFO" explanation panel -- shared by LOG's confirm
     // panel and ALERT's own MORE INFO button (the two screens are never
@@ -700,6 +803,18 @@ namespace Theme {
     // (pet.h) does. `baseY` is the ground his feet stand on. He is drawn at
     // the size the hill draws him: no new art, and nothing to scale.
     void drawYeti(TFT_eSPI& t, int x, int baseY, uint32_t now, YetiPose pose);
+    // A pose that is not one of the five: the pet's dances and his getting
+    // up after a throw. Arm points are from his centre and his body line,
+    // left arm first, elbow then hand -- the same numbers the five poses
+    // use internally. `behind` (-1 left, 1 right, 0 neither) draws that arm
+    // before his body, which is the whole trick of the floss. Nothing here
+    // bobs on its own: a dance moves him on its own beat.
+    struct YetiRig {
+        int8_t arms[2][4];
+        int8_t hop, crouch, lean, hip, behind, mouth, lLift, rLift, headShift, bulge;
+        bool   eyesOff;
+    };
+    void drawYetiRig(TFT_eSPI& t, int x, int baseY, uint32_t now, const YetiRig& r);
     // How wide and tall he is, so a caller can place him without knowing
     // how he is built.
     static const int YETI_W = 36, YETI_H = 42;

@@ -15,7 +15,7 @@ static PowerRow rowAt(uint8_t i) { return (PowerRow)i; }
 // needs a live TFT_eSPI& since it depends on real font metrics, and is
 // shared by drawing and hit-testing so the two cannot drift apart.
 static void computeGeom(TFT_eSPI& t, int screenH, int& top, int& bodyBottom, int& rowH) {
-    top = TOP_MARGIN + Theme::LIST_HEADING_H;
+    top = TOP_MARGIN + Theme::listHeadingH();
     bodyBottom = screenH - Theme::pinnedBackH(t.width()) - 2;
     t.setTextSize(Theme::uiMenuTextSize(t));
     // Two pixels taller than the text strictly needs on each side: a 24 px
@@ -116,7 +116,7 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, PowerRow r, bool compact
     // sun came through the gaps in every word in every theme.
     Theme::drawListRowPanel(t, w, y, hgt);
 
-    t.setTextSize(compact ? 1 : 2);
+    Theme::subListTextSize(t, compact, label, value, w);   // FONTS > MENUS
     // The colour of the Settings row that opened this screen, as every
     // sub-list wears; the rows under the master switch fade to the dim grey
     // the rest of the UI already uses for inactive text.
@@ -134,6 +134,7 @@ static void drawRow(TFT_eSPI& t, int w, int y, int hgt, PowerRow r, bool compact
         t.setCursor(w - 18 - vw, y + (hgt - t.fontHeight()) / 2);
         t.print(value);
     }
+    t.setTextFont(1);
 }
 
 void uiPowerTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng) {

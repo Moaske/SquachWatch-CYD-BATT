@@ -40,6 +40,7 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | Board | Touch | On the flasher | Good to know |
 |---|---|---|---|
 | 2.8" CYD, ST7789 (ESP32-2432S028R) | Resistive | Yes | The usual screen. The 80 MHz box is ticked by default. |
+| DIYmalls 2.8" (JC2432W328C) | Capacitive | Yes | Named flasher option; shares the ST7789 `cyd` / `cyd-fast` firmware, which detects touch at startup. [Hardware and battery notes](DIYMALLS-28.md). |
 | 2.8" CYD, ILI9341 (ESP32-2432S028R) | Resistive | Yes | The older screen on the same board. Also the build for the ESP32-32E 2.8" (E32R28T). Leave 80 MHz unticked. |
 | 3.2" resistive (Freenove FNK0103) | Resistive | Yes | |
 | 3.2" capacitive (ESP32-2432S032C) | Capacitive | Yes (NEW) | Already runs at 80 MHz. |
@@ -53,8 +54,9 @@ Everything on the [web flasher](https://squachwatch.com/), with the names it use
 | M5Stack StickS3 | None, two buttons | BETA | Tiny 1.14" screen, landscape only. One button moves a cursor, the other presses. |
 | M5Stack Cardputer ADV | None, keyboard | BETA | Not the original Cardputer. Arrows and TAB move, ENTER presses, ESC goes home. |
 | LilyGo T-Watch S3 / S3 Plus | Capacitive | BETA | On your wrist. Battery, buzz, LoRa listening; the S3 Plus adds GPS. |
+| M5Stack Tab5 | Capacitive | Test builds only (`?lab=1`) | Experimental. A 5" tablet whose radio is a separate chip that needs our firmware first. Notes in [TAB5.md](TAB5.md). |
 
-Not sure which one you've got? The code on the back (like ESP32-2432S028R) tells you. The last letter is the touch: R is resistive (press), C is capacitive (tap). Type it into the flasher's box and it picks the build for you.
+Not sure which one you've got? Type the code on the back into the flasher's box. `JC2432W328C` selects the named DIYmalls option; `ESP32-2432S028R` selects the original CYD entry. For that CYD family, the last letter is the touch: R is resistive (press), C is capacitive (tap).
 
 BETA means it runs the whole firmware but has had less time on real hardware than the 2.8". It works; it just hasn't earned the right to be boring yet.
 
@@ -138,12 +140,18 @@ Be honest with yourself about what the PIN does: it stops a snoop who picks the 
 
 **CHARGE MODE** (Settings, every board except the watch) turns off the radios, the status light and the screen so a battery charges faster. Tap the dark screen to see how long it's been charging; tap again while that shows to wake the board.
 
-**The BOOT button** on the CYD-style boards: a short press turns the screen off, and pressing it again turns it back on. Hold it for about a second to start CHARGE MODE.
+**The BOOT button** on the CYD-style boards: a short press turns the screen off, and only another press turns it back on. That's **POCKET MODE**: a touch won't wake it, so a board in a pocket or a bag stays dark. Alerts still light it for their card and then it goes dark again. Hold BOOT for about a second to start CHARGE MODE. On the Freenove ESP32-S3 2.8" and 3.5", which have a battery connector, holding BOOT is the power switch instead: at about a second it says KEEP HOLDING, at three it powers off, and a press of BOOT turns it back on. CHARGE MODE is on the Settings list there.
+
+**The speaker.** The Freenove ESP32-S3 2.8" and 3.5" have one. SOUND in Settings is OFF (the default), ALERTS (a device you've never seen, a watch-list hit, a low battery) or ALL (those plus a squad message, a visitor, throws and landings, C1iPPY, the toaster and the lamp noticing the cable). VOLUME is 0-100% on its - and + buttons; each press plays a sample. Nothing plays while the screen is dimmed or at night (11 pm to 5 am), except a watch-list hit.
+
+**The battery lamp.** On the Freenove ESP32-S3 2.8" and 3.5" and the T-Watch, a little lava lamp under the menu button is the battery: the lava is the charge. On the cable, bubbles stream up and a rainbow runs through the cap and base; under 10% it flickers. The Freenove boards work out the cable from the battery voltage jumping when you plug in, so it can take a few seconds to notice. Boards with no battery don't show a lamp.
+
+The DIYmalls JC2432W328C has a physical BAT connector and battery switch, but the board's battery-sensing circuit and charger have not been verified. SquachWatch does not show a battery percentage for it, and USB power must not be taken as evidence that USB charging is supported. See the [JC2432W328C hardware guide](DIYMALLS-28.md) before connecting a battery.
 
 **On the T-Watch:**
 
 - POWER SAVER is on by default. On battery the screen times out whatever you set; on the charger it stays lit like a desk clock.
-- The crown turns the screen off and on.
+- The crown turns the screen off, and only the crown turns it back on (POCKET MODE).
 - **WATCH SETTINGS** (the first row in Settings) shows the BATTERY and has the battery knobs: RADIOS (how much of the time WiFi gets; Bluetooth is always on by default), BLE LISTEN, SLEEP CPU and BUZZ.
 - **TAGS + RINGS** is set to LOG ONLY by default, so trackers and Ring cameras are logged without waking the screen or buzzing. A day out otherwise means a lot of AirTags in passing cars.
 
@@ -164,7 +172,7 @@ The buttons:
 
 - **MORE INFO**: what this thing is and why it matched.
 - **IGNORE**: never alert on this exact device again. It's still logged and counted, with an IGNORED tag on its LOG row. Tap it again (it reads MUTED) or use Settings > IGNORED to undo it.
-- **SNOOZE**: quiet about this device until the board restarts.
+- **SNOOZE**: quiet about this device for a while. Tap once for 10 minutes, twice for 30, three times for an hour, four times for 4 hours. The button shows the time, and it locks in three seconds after your last tap. After the first tap the card says TAP AGAIN: LONGER. For good, use IGNORE.
 - **HUNT**: a hot/cold fox hunt for that device, GETTING WARMER or GETTING COLDER as you move. STOP HUNT ends it.
 
 **Too many alerts?**
@@ -226,6 +234,8 @@ A squad gets you:
 ## GPS and LoRa (watches only)
 
 **GPS** is on the **T-Watch S3 Plus** only. **WARDRIVE** in WATCH SETTINGS turns the GPS and the log on together: every WiFi network and Bluetooth device it hears, with position, logged only while it has a fresh fix. It holds up to 125,000 sightings across restarts. **DOWNLOAD WIGLE FILE** on the web flasher (desktop Chrome or Edge) saves it as a file you can upload to [wigle.net](https://wigle.net/uploads). The log stays on the watch until you clear it, and a duress wipe takes it with everything else. The watch also sets its clock from GPS. Wardriving was marked not road-tested when it shipped in v1.25.0, so treat it as new.
+
+**SEEN AT.** Anything the LOG kept with a GPS position shows it: long-press the device in the LOG and it says SEEN AT and where.
 
 **LoRa** is on both the T-Watch S3 and the S3 Plus, and it only listens. It decodes the public channels of Meshtastic and MeshCore, using the EU 868 or US 915 band depending on your time zone. **LORA** in WATCH SETTINGS picks BOTH, MESHTASTIC, MESHCORE or OFF, and **LORA CHATS** shows what was said, one tab per network. More in [LORA.md](LORA.md).
 

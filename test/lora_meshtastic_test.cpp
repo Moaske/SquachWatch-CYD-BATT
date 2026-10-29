@@ -18,6 +18,12 @@ static Lora::Packet pk;
 
 static void put32(uint8_t* p, uint32_t v) { LoraCrypto::wr32le(p, v); }
 
+// memmem is not everywhere; a frame this small does not need it.
+static bool contains(const uint8_t* hay, size_t n, const char* needle, size_t m) {
+    for (size_t i = 0; i + m <= n; i++) if (memcmp(hay + i, needle, m) == 0) return true;
+    return false;
+}
+
 // A packet with the given header and a plaintext Data payload, encrypted
 // with `key` (nullptr for none).
 static void build(uint32_t to, uint32_t from, uint32_t id, uint8_t flags, uint8_t chHash,
@@ -186,6 +192,67 @@ int main() {
         ck("hash is name xor default key", c.hash == channelHash("Squad", key, 16));
         ck("a 16-byte hex key", addChannel("Priv", "000102030405060708090a0b0c0d0e0f") && channel(channelCount() - 1).key[15] == 0x0f);
         ck("garbage is refused", !addChannel("Bad", "zz!!"));
+        clearUserChannels();
+    }
+
+    // The channel chip's send path: buildFrame() is what Lora::sendText puts
+    // on the air, and decode() is what a receiver -- this board's own decoder,
+    // standing in for a stock node holding the same name and key -- makes of it.
+    suite("A frame we build on a private channel opens on that channel");
+    {
+        clearUserChannels();
+        // Made-up key bytes, base64 the way the Meshtastic app shows a channel key.
+        ck("a private channel added", addChannel("Yowie", "ah3yOYBexxSbQugNc68msQ=="));
+        const uint8_t yi = (uint8_t)findChannel("Yowie");
+        const Channel y = channel(yi);
+        ck("it can be sent on", canSend(y) && y.keyLen == 16);
+        const char* msg = "meet at the big rock";
+        uint8_t f[256];
+        const uint16_t n = buildFrame(y, 0x5A5A1234u, 0x0BADF00Du, 3, PORT_TEXT, (const uint8_t*)msg, strlen(msg), f);
+        ck("a frame came out", n == 16 + 4 + strlen(msg));
+        ck("its hash byte is the channel's", f[13] == y.hash && f[13] == channelHash("Yowie", y.key, 16));
+        ck("and not LongFast's", f[13] != 0x08);
+        ck("hop limit 3, hop start 3", (f[12] & 7) == 3 && (f[12] >> 5) == 3);
+        ck("the text is not on the air in the clear", !contains(f, n, msg, strlen(msg)));
+        memset(&pk, 0, sizeof pk);
+        pk.flags = Lora::PK_CRC_PRESENT | Lora::PK_CRC_OK;
+        memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        Decoded d;
+        ck("decodes", decode(pk, d) && d.haveData);
+        ck("on that channel", d.channelIdx == yi);
+        ck("as the text that went in", d.data.portnum == PORT_TEXT && strcmp(d.text, msg) == 0);
+        ck("from us, to everyone", d.hdr.from == 0x5A5A1234u && d.hdr.to == BROADCAST && d.hdr.id == 0x0BADF00Du);
+        // Muted, the same frame no longer opens -- and cannot be built.
+        setChannelEnabled(yi, false);
+        ck("muted: shut", decode(pk, d) && !d.haveData);
+        ck("muted: nothing to send on", !canSend(channel(yi)) &&
+           buildFrame(channel(yi), 1, 2, 3, PORT_TEXT, (const uint8_t*)"x", 1, f) == 0);
+        clearUserChannels();
+    }
+
+    suite("The default channel, a plaintext one, and a key we cannot seal");
+    {
+        uint8_t f[256];
+        const char* msg = "hello";
+        uint16_t n = buildFrame(channel(0), 0x5A5A0001u, 77, 3, PORT_TEXT, (const uint8_t*)msg, 5, f);
+        ck("LongFast: hash 0x08, the default key", n && f[13] == 0x08);
+        memset(&pk, 0, sizeof pk); memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        Decoded d;
+        ck("and it reads back on channel 0", decode(pk, d) && d.haveData && d.channelIdx == 0 && !strcmp(d.text, msg));
+
+        clearUserChannels();
+        ck("a no-key channel added", addChannel("OpenCamp", "0"));
+        const uint8_t oi = (uint8_t)findChannel("OpenCamp");
+        n = buildFrame(channel(oi), 0x5A5A0001u, 78, 3, PORT_TEXT, (const uint8_t*)msg, 5, f);
+        ck("plaintext: the hash is the name's alone", n && f[13] == channelHash("OpenCamp", nullptr, 0));
+        ck("plaintext: the text is in the clear", contains(f, n, msg, 5));
+        memset(&pk, 0, sizeof pk); memcpy(pk.data, f, n); pk.len = (uint8_t)n;
+        ck("and it reads back on that channel", decode(pk, d) && d.haveData && d.channelIdx == oi && !strcmp(d.text, msg));
+
+        ck("a 32-byte key added", addChannel("Big", "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="));
+        const Channel b = channel((uint8_t)findChannel("Big"));
+        ck("cannot be sent on (no AES-256 here)", b.keyLen == 32 && !canSend(b) &&
+           buildFrame(b, 1, 2, 3, PORT_TEXT, (const uint8_t*)msg, 5, f) == 0);
         clearUserChannels();
     }
 

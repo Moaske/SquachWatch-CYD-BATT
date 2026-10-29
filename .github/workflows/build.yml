@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.13'   # pioarduino refuses newer (3.15, 2026-10-20)
 
       # Both caches matter: the toolchain is a ~200MB download and the
       # framework another large unpack, and neither changes between runs.
@@ -74,6 +74,34 @@ jobs:
       # that is not worth it; the board is opt-in either way.
       - name: Build RockBase NM-CYD-C5 (ESP32-C5)
         run: pio run -e nm-cyd-c5
+
+      # The Marauder V8: the same C5 platform, so no new toolchain.
+      - name: Build Marauder V8 (ESP32-C5)
+        run: pio run -e marauder-v8
+
+      # The LilyGo T-Deck Plus: an S3 like the watch, on the ordinary platform.
+      - name: Build LilyGo T-Deck Plus (ESP32-S3)
+        run: pio run -e tdeck-plus
+
+      # The Freenove ESP32-S3 2.8" at 40 MHz, for panels that tear at 80.
+      # Packaged as one image, flashed at 0x0, so it can be tested on
+      # hardware before it goes on the flasher.
+      - name: Build Freenove ESP32-S3 2.8" at 40 MHz
+        run: |
+          pio run -e freenove-s3-40mhz
+          pip install esptool
+          python -m esptool --chip esp32s3 merge_bin \
+            -o firmware-freenove-s3-40mhz-merged.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            0x0     .pio/build/freenove-s3-40mhz/bootloader.bin \
+            0x8000  .pio/build/freenove-s3-40mhz/partitions.bin \
+            0xe000  "$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin" \
+            0x10000 .pio/build/freenove-s3-40mhz/firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-freenove-s3-40mhz
+          path: firmware-freenove-s3-40mhz-merged.bin
 
   tests:
     # The decoders are pure arithmetic over byte buffers, so they run on a

@@ -14,6 +14,7 @@
 // many bytes the next boot would find.
 #include "ignore_list.h"
 #include "test_util.h"
+#include <Arduino.h>
 #include <Preferences.h>
 #include <cstdlib>
 #include <filesystem>
@@ -111,6 +112,43 @@ int main() {
            IgnoreList::add(A, DetectionType::FLOCK) &&
            IgnoreList::addRotating(B, DetectionType::SAMSUNG_TAG, noneLive) && IgnoreList::contains(A));
         IgnoreList::clear();
+    }
+    suite("A snooze follows a rotating tracker, time left and all (fork addition)");
+    {
+        SimClock::virtualTime = true;
+        SimClock::nowMs = 5000;
+        const uint8_t E[6] = { 0xE1, 0x01, 0x02, 0x03, 0x04, 0x05 };
+        const uint8_t F[6] = { 0xE2, 0x06, 0x07, 0x08, 0x09, 0x0A };
+        ck("10 min snooze on the old address", IgnoreList::snooze(E, IgnoreList::SnoozeDuration::MIN_10));
+        SimClock::nowMs += 4UL * 60 * 1000;
+        ck("moves to the new address", IgnoreList::rekeySnooze(E, F));
+        ck("new address snoozed, old not", IgnoreList::snoozed(F) && !IgnoreList::snoozed(E));
+        SimClock::nowMs += 5UL * 60 * 1000;
+        ck("still snoozed 9 min after it began", IgnoreList::snoozed(F));
+        SimClock::nowMs += 2UL * 60 * 1000;
+        ck("over at 11 min: the time did not restart", !IgnoreList::snoozed(F));
+        ck("nothing to move from an address not snoozed", !IgnoreList::rekeySnooze(E, F));
+        SimClock::virtualTime = false;
+    }
+    suite("Timed snoozes run out when they should");
+    {
+        SimClock::virtualTime = true;
+        SimClock::nowMs = 1000;
+        const uint8_t C[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+        const uint8_t D[6] = { 0x66, 0x55, 0x44, 0x33, 0x22, 0x10 };
+        ck("10 min snooze taken", IgnoreList::snooze(C, IgnoreList::SnoozeDuration::MIN_10));
+        ck("4 hour snooze taken", IgnoreList::snooze(D, IgnoreList::SnoozeDuration::HOUR_4));
+        ck("both quiet now", IgnoreList::silenced(C) && IgnoreList::silenced(D));
+        SimClock::nowMs += 11UL * 60 * 1000;
+        ck("10 min one is back after 11 min", !IgnoreList::snoozed(C));
+        ck("4 hour one still quiet after 11 min", IgnoreList::snoozed(D));
+        SimClock::nowMs += 3UL * 60 * 60 * 1000;
+        ck("4 hour one still quiet after 3 h 11 min", IgnoreList::snoozed(D));
+        SimClock::nowMs += 50UL * 60 * 1000;
+        ck("4 hour one back after 4 h 1 min", !IgnoreList::snoozed(D));
+        ck("a timed snooze writes nothing to disk", []{
+            Preferences p; p.begin(NS, false); return p.getBytesLength("snz") == 0; }());
+        SimClock::virtualTime = false;
     }
 
     std::filesystem::remove_all(dir);

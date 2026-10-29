@@ -272,6 +272,32 @@ bool parseGroupText(const uint8_t* plain, uint8_t len, GroupText& g) {
     return true;
 }
 
+uint16_t sealGroupText(const Channel& c, uint32_t stamp, const char* name, const char* text, uint8_t* f,
+                       GroupText* echo) {
+    if (echo) memset(echo, 0, sizeof *echo);
+    if (!f || !c.enabled || !c.name[0] || !text) return 0;
+    uint8_t plain[192];
+    memset(plain, 0, sizeof plain);
+    wr32le(plain, stamp);
+    plain[4] = 0x00;
+    int tl = snprintf((char*)plain + 5, sizeof plain - 5, "%s: %s", name ? name : "", text);
+    if (tl < 0) return 0;
+    if (tl > (int)sizeof plain - 6) tl = (int)sizeof plain - 6;
+    const uint16_t plen = (uint16_t)(5 + tl);
+    const uint16_t clen = (uint16_t)((plen + 15) & ~15);
+    f[0] = 0x15;          // flood, GRP_TXT
+    f[1] = 0x00;          // no path yet
+    f[2] = c.hash;
+    Aes128 aes; aes.setKey(c.key);
+    for (uint16_t off = 0; off < clen; off = (uint16_t)(off + 16)) aes.encryptBlock(plain + off, f + 5 + off);
+    uint8_t secret[32] = {0}; memcpy(secret, c.key, 16);
+    uint8_t mac[32];
+    hmacSha256(secret, 32, f + 5, clen, mac);
+    f[3] = mac[0]; f[4] = mac[1];
+    if (echo) parseGroupText(plain, (uint8_t)plen, *echo);
+    return (uint16_t)(5 + clen);
+}
+
 bool parseTrace(const Frame& f, Trace& t) {
     memset(&t, 0, sizeof t);
     if (f.type != TYPE_TRACE || f.payloadLen < 9) return false;

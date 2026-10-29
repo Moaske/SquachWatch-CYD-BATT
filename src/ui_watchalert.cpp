@@ -242,7 +242,9 @@ void drawOperator(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, int hin
     }
     const bool wide = w >= 300;
 
-    const int bandTop = 34, bandBot = hintY - 32;   // LOCKED ON is 24 rows, plus a gap over the hint
+    // LOCKED ON is 24 rows, plus a gap over the hint; on the large panels the
+    // two body-font lines beside it need 40.
+    const int bandTop = 34, bandBot = hintY - (Theme::large() ? 44 : 32);
     const int bandH = bandBot - bandTop;
     int R = bandH / 2 - 2;
     // Narrow screens: the scope gives up width so he still fits beside it.
@@ -276,11 +278,12 @@ void drawOperator(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, int hin
     char nb[40];
     if (v.haveRssi) snprintf(nb, sizeof nb, "%s  %d dBm", v.label, (int)v.rssi);
     else            snprintf(nb, sizeof nb, "%s", v.label);
+    Theme::bodyFontOn(t);
     fitPrint(t, nx, bandBot + 4, nb, nw, 1, (uint16_t)0xB7F5, false);
     if (v.haveRssi) {
         const char* word = v.trend > 0 ? "CLOSER" : v.trend < 0 ? "FURTHER" : "HOLDING";
         const uint16_t ac = v.trend > 0 ? (uint16_t)0xF920 : v.trend < 0 ? g3 : (uint16_t)0xB7F5;
-        const int ay = bandBot + 16;
+        const int ay = bandBot + 8 + t.fontHeight();
         if (v.trend > 0)      t.fillTriangle(nx, ay + 7, nx + 6, ay + 7, nx + 3, ay, ac);
         else if (v.trend < 0) t.fillTriangle(nx, ay, nx + 6, ay, nx + 3, ay + 7, ac);
         else                  t.fillRect(nx, ay + 3, 7, 2, ac);
@@ -289,6 +292,7 @@ void drawOperator(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, int hin
         t.setCursor(nx + 10, ay);
         t.print(word);
     }
+    Theme::bodyFontOff(t);
 }
 
 }  // namespace
@@ -303,8 +307,9 @@ void uiWatchAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, boo
     const int w = t.width(), h = t.height();
     // Two ways out doing different things: anywhere on the screen dismisses
     // the alert and leaves the watch running, the button ends the watch.
-    // The hint sits clear of the button by the font height plus a gap.
-    const int hintY = h - REMOVE_H - 10 - 8 - 6;
+    // The hint sits clear of the button by the font height plus a gap: the
+    // body font's, 16 rows on the large panels.
+    const int hintY = h - REMOVE_H - 10 - (Theme::large() ? 16 : 8) - 6;
     // The next line, on the pass that advances (see advance).
     if (advance && (s_lineFirst || now - s_lineAt >= LINE_MS)) {
         const WatchView v = gather(eng);
@@ -334,10 +339,11 @@ void uiWatchAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, boo
         return;
     }
     const char* tapMsg = "tap anywhere to dismiss";
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     t.setTextColor(Theme::WHITE);
     t.setCursor((w - t.textWidth(tapMsg)) / 2, hintY);
     t.print(tapMsg);
+    Theme::bodyFontOff(t);
     int bx, by, bw, bh;
     removeRect(t, bx, by, bw, bh);
     Theme::drawButton(t, bx, by, bw, bh, removeLabel(t, bw), false);

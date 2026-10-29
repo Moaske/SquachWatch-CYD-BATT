@@ -100,18 +100,43 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.13"   # pioarduino refuses newer (3.15 broke the C5 runner, 2026-10-20)
       - name: Install PlatformIO
         run: pip install --upgrade platformio
       - name: Build RockBase NM-CYD-C5 (ESP32-C5)
         run: pio run -e nm-cyd-c5
+      # The Marauder V8 (ESP32-C5, 8 MB) on the same runner and platform. Its
+      # own step can fail without taking the NM-CYD-C5 with it.
+      - name: Build Marauder V8 (ESP32-C5)
+        continue-on-error: true
+        run: pio run -e marauder-v8
+      # The M5Stack Tab5 (ESP32-P4) on the same platform. LAB ONLY: offered
+      # under ?lab=1, never on the public page or attached to a release. Its
+      # radio is an ESP32-C6 that needs our own firmware written to it first
+      # (docs/TAB5.md); a stock Tab5 runs this build with WiFi and Bluetooth
+      # off. Its own step, so a failure here never costs the C5 boards.
+      - name: Build M5Stack Tab5 (ESP32-P4)
+        continue-on-error: true
+        run: pio run -e tab5
       - name: Collect
         run: |
           mkdir -p c5
           cp .pio/build/nm-cyd-c5/bootloader.bin .pio/build/nm-cyd-c5/partitions.bin .pio/build/nm-cyd-c5/firmware.bin c5/
+          # The V8's bootloader and table are its own (DIO, 8 MB, 3.5 MB
+          # slots), named for it so they never mix with the NM-CYD-C5's.
+          if [ -f .pio/build/marauder-v8/firmware.bin ]; then
+            for f in bootloader partitions firmware; do cp ".pio/build/marauder-v8/$f.bin" "c5/marauder-v8-$f.bin"; done
+          fi
           # boot_app0 lives in the framework the C5 was built with, not the
           # Xtensa boards' one.
           cp "$(find ~/.platformio/packages -path '*framework-arduinoespressif32*/tools/partitions/boot_app0.bin' | head -1)" c5/boot_app0.bin
+          # The Tab5: bootloader at 0x2000 like the C5, the 16 MB table, and
+          # the same framework's boot_app0 under its own name, so its lab
+          # manifest never depends on a C5 build having come through.
+          if [ -f .pio/build/tab5/firmware.bin ]; then
+            for f in bootloader partitions firmware; do cp ".pio/build/tab5/$f.bin" "c5/tab5-$f.bin"; done
+            cp c5/boot_app0.bin c5/tab5-boot_app0.bin
+          fi
           ls -l c5
       - uses: actions/upload-artifact@v4
         with:
@@ -198,7 +223,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.13"   # pioarduino refuses newer (3.15 broke the C5 runner, 2026-10-20)
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio
@@ -223,7 +248,14 @@ jobs:
           # freenove-s3 (Freenove ESP32-S3 2.8", FNK0104B) and crowpanel7
           # (Elecrow CrowPanel Advance 7.0) are S3s too, public BETAs from
           # v1.24.0, contributed and tested on their authors' boards (#16, #11).
-          pio run -e twatch-s3 -e freenove-s3 -e crowpanel7
+          # freenove-s3-40mhz is the same 2.8" at a 40 MHz screen wire, for the
+          # panels that tear at 80 (#65, #14); the flasher offers it by unticking
+          # 80 MHz under Advanced on the 2.8"'s row. A public BETA from v1.40.0.
+          # freenove-s3-35 is the black Freenove ESP32-S3 3.5" (FNK0104N), a
+          # public BETA from v1.34.0: the 2.8"'s flash layout, its own QSPI panel.
+          # tdeck-plus is the LilyGo T-Deck Plus: the same S3, flash layout and
+          # bootloader as the watch, a public BETA from v1.36.0.
+          pio run -e twatch-s3 -e freenove-s3 -e freenove-s3-40mhz -e freenove-s3-35 -e crowpanel7 -e tdeck-plus
           # sticks3 is the M5Stack StickS3: an S3 with 8 MB of flash, so the
           # CYDs' partition table behind an S3 bootloader of its own. LAB ONLY:
           # built and signed every run, offered under ?lab=1, never attached
@@ -264,6 +296,20 @@ jobs:
             cp c5/boot_app0.bin  esp32c5-boot_app0.bin
           else
             echo "::warning::No NM-CYD-C5 build this run; the release goes out without it."
+          fi
+          # The Marauder V8, four parts like the NM-CYD-C5 and for the same
+          # reason; boot_app0 is the C5's one, shared.
+          if [ -f c5/marauder-v8-firmware.bin ]; then
+            cp c5/marauder-v8-firmware.bin c5/marauder-v8-bootloader.bin c5/marauder-v8-partitions.bin .
+            cp c5/boot_app0.bin esp32c5-boot_app0.bin
+          else
+            echo "::warning::No Marauder V8 build this run; the release goes out without it."
+          fi
+          # The Tab5, lab only: its four files, for the lab list below.
+          if [ -f c5/tab5-firmware.bin ]; then
+            cp c5/tab5-firmware.bin c5/tab5-bootloader.bin c5/tab5-partitions.bin c5/tab5-boot_app0.bin .
+          else
+            echo "::warning::No Tab5 build this run; it is not in the lab list."
           fi
           python -m esptool --chip esp32 merge_bin \
             -o firmware-cyd-merged.bin \
@@ -308,7 +354,7 @@ jobs:
             0x8000  .pio/build/twatch-s3/partitions.bin \
             0xe000  "$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin" \
             0x10000 .pio/build/twatch-s3/firmware.bin
-          for v in freenove-s3 crowpanel7; do
+          for v in freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus; do
             python -m esptool --chip esp32s3 merge_bin \
               -o "firmware-$v-merged.bin" \
               --flash_mode dio --flash_freq 80m --flash_size 16MB \
@@ -387,7 +433,7 @@ jobs:
           # assumed, for the same reason as the ESP32 pair above.
           for f in bootloader partitions; do
             ref="$(sha256sum ".pio/build/twatch-s3/$f.bin" | cut -d' ' -f1)"
-            for v in freenove-s3 crowpanel7; do
+            for v in freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus; do
               got="$(sha256sum ".pio/build/$v/$f.bin" | cut -d' ' -f1)"
               if [ "$got" != "$ref" ]; then
                 echo "::error::$v/$f.bin differs from twatch-s3/$f.bin, which the S3 manifests share."
@@ -402,7 +448,7 @@ jobs:
           # merged image for those on purpose: the merged blob is a
           # manual-recovery artifact, and recovery should land you on the
           # spec-compliant build rather than the overclocked one.
-          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 crowpanel7 sticks3 cardputer-adv; do
+          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
             cp ".pio/build/$v/firmware.bin" "$v-firmware.bin"
           done
 
@@ -420,7 +466,7 @@ jobs:
           fi
           umask 077
           printf '%s\n' "$OTA_SIGNING_KEY" > "$RUNNER_TEMP/ota_key.pem"
-          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 crowpanel7 sticks3 cardputer-adv; do
+          for v in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
             python tools/sign_firmware.py --key "$RUNNER_TEMP/ota_key.pem" \
               --env "$v" --bin "$v-firmware.bin" --out "$v-firmware.sig"
           done
@@ -457,10 +503,14 @@ jobs:
                     "web-flasher/manifest-cyd35c-fast.json",
                     "web-flasher/manifest-twatch-s3.json",
                     "web-flasher/manifest-freenove-s3.json",
+                    "web-flasher/manifest-freenove-s3-40mhz.json",
+                    "web-flasher/manifest-freenove-s3-35.json",
                     "web-flasher/manifest-crowpanel7.json",
                     "web-flasher/manifest-sticks3.json",
                     "web-flasher/manifest-cardputer-adv.json",
-                    "web-flasher/manifest-nm-cyd-c5.json"):
+                    "web-flasher/manifest-nm-cyd-c5.json",
+                    "web-flasher/manifest-marauder-v8.json",
+                    "web-flasher/manifest-tdeck-plus.json"):
               m = json.load(open(p))
               m["version"] = "${{ steps.ver.outputs.version }}"
               if name: m["release_name"] = name
@@ -489,7 +539,10 @@ jobs:
           cp web-flasher/manifest-cyd35c-fast.json manifest-cyd35c-fast.json
           cp web-flasher/manifest-twatch-s3.json manifest-twatch-s3.json
           cp web-flasher/manifest-freenove-s3.json manifest-freenove-s3.json
+          cp web-flasher/manifest-freenove-s3-40mhz.json manifest-freenove-s3-40mhz.json
+          cp web-flasher/manifest-freenove-s3-35.json manifest-freenove-s3-35.json
           cp web-flasher/manifest-crowpanel7.json manifest-crowpanel7.json
+          cp web-flasher/manifest-tdeck-plus.json manifest-tdeck-plus.json
           cp web-flasher/manifest-sticks3.json manifest-sticks3.json
           cp web-flasher/manifest-cardputer-adv.json manifest-cardputer-adv.json
 
@@ -533,9 +586,18 @@ jobs:
             freenove-s3-firmware.bin \
             firmware-freenove-s3-merged.bin \
             manifest-freenove-s3.json \
+            freenove-s3-40mhz-firmware.bin \
+            firmware-freenove-s3-40mhz-merged.bin \
+            manifest-freenove-s3-40mhz.json \
+            freenove-s3-35-firmware.bin \
+            firmware-freenove-s3-35-merged.bin \
+            manifest-freenove-s3-35.json \
             crowpanel7-firmware.bin \
             firmware-crowpanel7-merged.bin \
             manifest-crowpanel7.json \
+            tdeck-plus-firmware.bin \
+            firmware-tdeck-plus-merged.bin \
+            manifest-tdeck-plus.json \
             sticks3-bootloader.bin \
             sticks3-partitions.bin \
             sticks3-firmware.bin \
@@ -563,7 +625,7 @@ jobs:
             manifest-cyd35-fast.json \
             manifest-cyd35c-fast.json \
             $(ls nm-cyd-c5-*.bin esp32c5-*.bin 2>/dev/null) \
-            $([ -f nm-cyd-c5-firmware.bin ] && cp web-flasher/manifest-nm-cyd-c5.json manifest-nm-cyd-c5.json && echo manifest-nm-cyd-c5.json) \
+            $([ -f nm-cyd-c5-firmware.bin ] && cp web-flasher/manifest-nm-cyd-c5.json manifest-nm-cyd-c5.json && echo manifest-nm-cyd-c5.json)             $(ls marauder-v8-*.bin 2>/dev/null)             $([ -f marauder-v8-firmware.bin ] && cp web-flasher/manifest-marauder-v8.json manifest-marauder-v8.json && echo manifest-marauder-v8.json) \
             $(ls *-firmware.sig 2>/dev/null)
 
       - name: Build the browser emulator
@@ -615,8 +677,8 @@ jobs:
         run: |
           mkdir -p _site
           cp web-flasher/index.html _site/index.html
-          # next.html: the flasher laid out as three steps, served beside the
-          # real page for review (squachwatch.com/next.html) until it replaces it.
+          # next.html, the three-step layout, became index.html on 2026-10-11. A
+          # page put there again for review is served the same way.
           if [ -f web-flasher/next.html ]; then cp web-flasher/next.html _site/next.html; fi
           cp web-flasher/manifest-cyd.json _site/manifest-cyd.json
           cp web-flasher/manifest-cyd-ili9341.json _site/manifest-cyd-ili9341.json
@@ -630,10 +692,14 @@ jobs:
           cp web-flasher/manifest-cyd35c-fast.json _site/manifest-cyd35c-fast.json
           cp web-flasher/manifest-twatch-s3.json _site/manifest-twatch-s3.json
           cp web-flasher/manifest-freenove-s3.json _site/manifest-freenove-s3.json
+          cp web-flasher/manifest-freenove-s3-40mhz.json _site/manifest-freenove-s3-40mhz.json
+          cp web-flasher/manifest-freenove-s3-35.json _site/manifest-freenove-s3-35.json
           cp web-flasher/manifest-crowpanel7.json _site/manifest-crowpanel7.json
           cp web-flasher/manifest-sticks3.json _site/manifest-sticks3.json
           cp web-flasher/manifest-cardputer-adv.json _site/manifest-cardputer-adv.json
           cp web-flasher/manifest-nm-cyd-c5.json _site/manifest-nm-cyd-c5.json
+          cp web-flasher/manifest-marauder-v8.json _site/manifest-marauder-v8.json
+          cp web-flasher/manifest-tdeck-plus.json _site/manifest-tdeck-plus.json
           # A LAB RUN MUST NOT CHANGE WHAT THE PUBLIC PAGE SERVES.
           #
           # A Pages deploy is wholesale -- there is no partial update -- so a
@@ -710,8 +776,8 @@ jobs:
           import json, shutil, os
           label = "${{ steps.ver.outputs.label }}"
           ver   = "${{ steps.ver.outputs.version }}"
-          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "crowpanel7", "nm-cyd-c5", "sticks3", "cardputer-adv"):
-              # The C5 comes from its own runner and may not have come at all.
+          for board in ("cyd", "cyd-ili9341", "cyd-fast", "cyd-ili9341-fast", "cyd35-fast", "cyd35c-fast", "rlphantom-r", "freenove32", "cyd32c", "twatch-s3", "freenove-s3", "freenove-s3-40mhz", "freenove-s3-35", "crowpanel7", "nm-cyd-c5", "marauder-v8", "tdeck-plus", "sticks3", "cardputer-adv", "tab5"):
+              # The C5s and the Tab5 come from their own runner and may not have come at all.
               if not os.path.exists(board + "-firmware.bin"):
                   print("::warning::no %s build this run; not in the lab list" % board)
                   continue
@@ -755,7 +821,7 @@ jobs:
             # firmware here: v1.16.0 shipped cyd35-fast to the release and into
             # index.html's <option> list but neither into _site, so the 3.5"
             # appeared in the picker and 404'd when chosen.
-            for board in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 crowpanel7 sticks3 cardputer-adv; do
+            for board in cyd cyd-ili9341 awok rlphantom-r freenove32 cyd32c cyd-fast cyd-ili9341-fast cyd35-fast cyd35c-fast twatch-s3 freenove-s3 freenove-s3-40mhz freenove-s3-35 crowpanel7 tdeck-plus sticks3 cardputer-adv; do
               cp "$board-firmware.bin" "_site/$board-firmware.bin"
               # The Bluetooth update page fetches the image and its signature
               # side by side from the site root.
@@ -776,6 +842,20 @@ jobs:
           p, n = re.subn(r'[ \t]*<option value="\./manifest-nm-cyd-c5\.json"[^\n]*</option>\n', "", p)
           open("_site/index.html", "w", encoding="utf-8").write(p)
           print("::warning::no NM-CYD-C5 build this run: its option is off the page (%d removed)" % n)
+          PY
+            fi
+            # The Marauder V8, the same way: its own three files and the
+            # C5's boot_app0, or off this release's page.
+            if [ -f marauder-v8-firmware.bin ]; then
+              cp marauder-v8-firmware.bin marauder-v8-bootloader.bin marauder-v8-partitions.bin esp32c5-boot_app0.bin _site/
+            else
+              rm -f _site/manifest-marauder-v8.json
+              python3 - <<'PY'
+          import re
+          p = open("_site/index.html", encoding="utf-8").read()
+          p, n = re.subn(r'[ \t]*<option value="\./manifest-marauder-v8\.json"[^\n]*</option>\n', "", p)
+          open("_site/index.html", "w", encoding="utf-8").write(p)
+          print("::warning::no Marauder V8 build this run: its option is off the page (%d removed)" % n)
           PY
             fi
           fi

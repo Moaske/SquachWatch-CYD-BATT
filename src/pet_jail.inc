@@ -188,7 +188,7 @@ __attribute__((noinline)) static void chainDraw(TFT_eSPI& t, int ax, int ay, int
 
 __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int screenW) {
     int cx, halfW, top, bot;
-    if (!Squachy::lastFootprint(cx, halfW, top, bot)) { s_jX = -100; return; }
+    if (!zFootprint(cx, halfW, top, bot)) { s_jX = -100; return; }
     (void)top;
     // The ball stays where he stands; a carried or thrown Squachy pulls the
     // chain, not the ball.
@@ -208,6 +208,27 @@ __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int sc
     if (r < 6) r = 6;
     int ballX = cx + halfW * 76 / 65;
     if (ballX > screenW - r - 4) ballX = screenW - r - 4;
+    // No teleporting (see PetHop in pet.cpp). The ball follows his walk
+    // exactly, but when its spot leaps -- he was carried or thrown and put
+    // down somewhere else -- it rolls there, heavily, instead of appearing.
+    {
+        static int      s_jShown = -1000;
+        static uint32_t s_jRollAt = 0;
+        static bool     s_jRolling = false;
+        const uint32_t dt = s_jRollAt ? now - s_jRollAt : 0;
+        s_jRollAt = now;
+        const int far = halfW * 2 / 3 > 12 ? halfW * 2 / 3 : 12;
+        if (s_jX <= -100 || s_jShown == -1000 || dt > 500) { s_jShown = ballX; s_jRolling = false; }
+        else {
+            if (abs(ballX - s_jShown) > far) s_jRolling = true;
+            if (s_jRolling) {
+                const int step = (int)(dt * 0.3f) > 1 ? (int)(dt * 0.3f) : 1;
+                if (abs(ballX - s_jShown) <= step) { s_jShown = ballX; s_jRolling = false; }
+                else s_jShown += ballX > s_jShown ? step : -step;
+            } else s_jShown = ballX;
+        }
+        ballX = s_jShown;
+    }
     const int floorY = bot + 1;
 
     // Walked out: the ball says its piece, then goes up in smoke.
@@ -247,7 +268,7 @@ __attribute__((noinline)) static void jailTick(TFT_eSPI& t, uint32_t now, int sc
     if (ballOn) {
         const int bb = floorY + drop;
         int ax, ay;
-        if (drop == 0 && Squachy::chainPoint(ax, ay)) {
+        if (drop == 0 && zChainPoint(ax, ay)) {
             const int link = r / 4 > 2 ? r / 4 : 2;
             chainDraw(t, ax, ay, ballX - r * 3 / 4, bb - r - r * 3 / 4, floorY, link, away);
         }

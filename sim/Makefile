@@ -53,8 +53,10 @@ CXX      ?= g++
 # makes <TFT_eSPI.h>, <Arduino.h> and <Preferences.h> resolve to the
 # shims here rather than to an ESP32 core that isn't installed.
 EXTRA_CXXFLAGS ?=
+# CYD_GPS: both binaries are a cyd-gps build. squachsim-live reads its GPS
+# from the NMEA file named by SQUACHSIM_NMEA (sim/gps_sample.nmea is one).
 CXXFLAGS := -std=c++17 -O1 -g -Wall -Wno-unused-parameter $(EXTRA_CXXFLAGS) \
-            -I$(SIM_DIR) -I$(INC) -DSQUACH_MESH=1
+            -I$(SIM_DIR) -I$(INC) -DSQUACH_MESH=1 -DCYD_GPS=1
 
 UI_SRCS  := $(SRC)/theme.cpp \
             $(SRC)/gnss.cpp \
@@ -80,6 +82,7 @@ UI_SRCS  := $(SRC)/theme.cpp \
             $(SRC)/ui_meshphrase.cpp \
             $(SRC)/ui_meshcompose.cpp \
             $(SRC)/settings.cpp \
+            $(SRC)/lora_myname.cpp \
             $(SRC)/signatures.cpp \
             $(SRC)/remote_id.cpp \
             $(SRC)/clock.cpp \
@@ -126,11 +129,30 @@ UI_SRCS  := $(SRC)/theme.cpp \
             $(SRC)/frame_push.cpp \
             $(SRC)/frame_prof.cpp \
             $(SRC)/fast_sprite.cpp \
+            $(SRC)/wardrive_fmt.cpp \
+            $(SRC)/wifi_auth.cpp \
+            $(SRC)/wardrive_seen.cpp \
+            $(SRC)/wardrive_sd.cpp \
+            $(SRC)/sd_row.cpp \
             $(SIM_DIR)/ota_sim.cpp
 
 # touch_cal.cpp for the touchcal screen, which runs the real calibration flow
 # with a scripted finger. Only here: the live and web builds already compile it.
 SIM_SRCS := $(SIM_DIR)/main_sim.cpp $(SIM_DIR)/detection_sim.cpp $(SRC)/touch_cal.cpp
+
+# The T-Deck's LORA page (the `lora` screen), driven by a made-up band:
+# sim/lora_sim.cpp stands in for the sniffer the way detection_sim.cpp stands
+# in for the detection engine, and the profile table is the real one.
+# SQUACH_LORA_FAKE (on this renderer's own objects only, below) makes
+# include/lora_sniffer.h declare the real calls instead of its no-ops, and is
+# what src/ui_lorahome.cpp is built under here. Not -DSQUACH_LORA: that also
+# switches on the network halves of lora_feed.cpp and lora_enrich.cpp. The
+# live and web builds never see it, so their main.cpp is the CYD's as before.
+# The chats screen (`lorachat`) and the compose lines' channel chip read the
+# decoders' real channel tables and Lora::Chan's pick, so those come too.
+SIM_SRCS += $(SRC)/ui_lorahome.cpp $(SRC)/ui_lorasettings.cpp $(SIM_DIR)/lora_sim.cpp             $(SRC)/lora_profiles.cpp $(SRC)/lora_crypto.cpp
+SIM_SRCS += $(SRC)/ui_lorachat.cpp $(SRC)/lora_meshtastic.cpp $(SRC)/lora_meshcore.cpp $(SRC)/lora_channels.cpp
+SIM_FLAGS := -DSQUACH_LORA_FAKE=1
 
 # The interactive target additionally compiles the firmware's real
 # main.cpp -- its actual setup()/loop(), state machine, gesture handling
@@ -145,11 +167,18 @@ LIVE_SRCS := $(SRC)/main.cpp \
              $(SRC)/cap_touch.cpp \
              $(SRC)/touch_cal.cpp \
              $(SIM_DIR)/main_live.cpp \
-             $(SIM_DIR)/detection_sim.cpp
+             $(SIM_DIR)/detection_sim.cpp \
+             $(SRC)/clock.cpp
 # -include Arduino.h mirrors what the Arduino build system does for
 # every translation unit: cap_touch.cpp and friends call pinMode/delay
 # without including it themselves and rely on that being implicit.
-LIVE_FLAGS := -include $(SIM_DIR)/Arduino.h -include $(INC)/cyd_user_setup.h
+LIVE_FLAGS := -include $(SIM_DIR)/Arduino.h -include $(INC)/cyd_user_setup.h \
+              -DSQUACHSIM_SERIAL_IN=1
+# clock.cpp is compiled again for the live build, the one place Serial reads
+# console lines (SQUACHSIM_SERIAL_IN, sim/Arduino.h). Its console commands
+# name globals that only main.cpp defines, so the one-shot renderer keeps the
+# shared copy, where Serial never has input.
+LIVE_UI_OBJS = $(filter-out $(OBJ_DIR)/ui/clock.o,$(UI_OBJS))
 
 # ---- WebAssembly ----------------------------------------------------
 # The same sources as squachsim-live, compiled for the browser. The port
@@ -240,7 +269,7 @@ $(OBJ_DIR)/ui/%.o: %.cpp Makefile
 
 $(OBJ_DIR)/sim/%.o: %.cpp Makefile
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -MMD -MP -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(SIM_FLAGS) -MMD -MP -c -o $@ $<
 
 $(OBJ_DIR)/live/%.o: %.cpp Makefile
 	@mkdir -p $(dir $@)
@@ -249,7 +278,7 @@ $(OBJ_DIR)/live/%.o: %.cpp Makefile
 $(BIN): $(UI_OBJS) $(SIM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ -lm
 
-$(LIVE_BIN): $(UI_OBJS) $(LIVE_OBJS)
+$(LIVE_BIN): $(LIVE_UI_OBJS) $(LIVE_OBJS)
 	$(CXX) $(CXXFLAGS) $(LIVE_FLAGS) -o $@ $^ -lm
 
 -include $(DEPS)

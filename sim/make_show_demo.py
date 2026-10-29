@@ -32,6 +32,107 @@ CYAN  = (0, 214, 214)
 # ---- the clips ----
 
 CLIPS = {
+    # v1.40.0 "Wake Me Up Before You Go-Go", 320x240: SNOOZE mid-pick on the
+    # alert card (SQUACHSIM_SNOOZE is the step it shows, its bar running out
+    # over the capture), the SNOOZED toast it leaves on CLEAR
+    # (SQUACHSIM_TOAST), then the T-Deck: Meshtastic names on the LORA page,
+    # the chats with a channel picked (SQUACHSIM_LORACH), and LORA SETTINGS.
+    "wake-me-up": [
+        ("alert", 40, 30, [], {"SQUACHSIM_SNOOZE": "10 MIN"}, 1300, "SNOOZE COUNTS TAPS NOW. ONE TAP: 10 MIN."),
+        ("alert", 40, 46, [], {"SQUACHSIM_SNOOZE": "4 HOURS"}, 1300, "FOUR TAPS: FOUR HOURS OF PEACE."),
+        ("clear", 40, 40, ["--bg", "5"], {"SQUACHSIM_TOAST": "SNOOZED|This one, for 4 hours", "SQUACHSIM_BATT": "80"}, 1600, "SQUACHY WILL WAKE YOU. LATER."),
+        ("lora", 40, 40, [], {"SQUACHSIM_LORATX": "1"}, 1500, "MESHTASTIC FOLKS HAVE NAMES NOW, NOT NUMBERS."),
+        ("lorachat", 20, 60, [], {"SQUACHSIM_LORATX": "1", "SQUACHSIM_LORACH": "Yowie", "SQUACHSIM_LORATYPE": "ANYONE SEEN MY LEFT BOOT?"}, 1700, "PICK A CHANNEL. YELL INTO IT."),
+        ("lorasettings", 20, 30, [], {}, 1700, "THE T-DECK GOT ITS OWN LORA SETTINGS."),
+    ],
+    # v1.39.0 "Radar Love", at the T-Deck Plus's 320x240: the LORA page on the
+    # emulator's made-up band (sim/lora_sim.cpp: Bluff Creek, cryptids only).
+    # A packet lands 0.7 s into every capture, on the open tab's network, so
+    # each scene opens with a loud ping on the radar and a new chat line. The
+    # Meshtastic tab, the radar, a quiet band (SQUACHSIM_LORAQUIET: nothing
+    # for 30 s, so the SPECTRUM twinkles and the meteor has the strip to
+    # itself), the MeshCore tab (--tab 1), and a line typed and sent
+    # (SQUACHSIM_LORATYPE). SQUACHSIM_LORATX turns LORA TX on, so the compose
+    # line reads as it does on a board that can send.
+    "radar-love": [
+        ("lora", 30, 40, [], {"SQUACHSIM_LORATX": "1"}, 1500, "THE T-DECK GOT A RADIO PAGE. PRESS ENTER."),
+        ("lora", 75, 40, [], {"SQUACHSIM_LORATX": "1"}, 1600, "A RADAR THAT ONLY TELLS THE TRUTH"),
+        ("lora", 120, 50, [], {"SQUACHSIM_LORAQUIET": "30", "SQUACHSIM_LORATX": "1"}, 1500, "QUIET AIR? IT STILL PUTS ON A SHOW."),
+        ("lora", 40, 40, ["--tab", "1"], {"SQUACHSIM_LORATX": "1"}, 1500, "TAP A TAB: MESHTASTIC OR MESHCORE"),
+        ("lora", 20, 60, ["--tab", "1"], {"SQUACHSIM_LORATYPE": "WHO TOOK MY TRAIL MIX?"}, 1800, "TYPE. ENTER. THE WHOLE FOREST KNOWS."),
+    ],
+    # v1.38.0 "Snoop Onto Them", 320x240: an Axon body-cam alert and a gunshot
+    # sensor's (--alert picks the kind), M3@ty's bad dance (SQUACHSIM_MEATY=4)
+    # and a wave while he talks (=5), the FONTS page with BUBBLES slid to
+    # HUGE and its preview (SQUACHSIM_FONTS digits are MENUS TEXT BUTTONS
+    # BUBBLES XP PETS, 0-4 around 2; FONTPREVIEW 3 = bubbles), and the main
+    # screen saying a line in that bubble, under the tiles.
+    "snoop-onto-them": [
+        ("alert", 40, 30, ["--alert", "2"], {}, 1800, "AXON BODY CAMS, NOW HEARD OVER BLUETOOTH."),
+        ("alert", 40, 30, ["--alert", "5"], {}, 1800, "GUNSHOT SENSORS: RAVEN, AND NOW SHOTSPOTTER."),
+        ("clear", 40, 110, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "4", "SQUACHSIM_BATT": "80"}, 1500, "M3@TY GREW ARMS. NOBODY ASKED HIM TO."),
+        ("clear", 40, 60, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "5", "SQUACHSIM_BATT": "80"}, 1500, "ONLY WHEN HE NEEDS THEM."),
+        ("settings", 10, 14, ["--scroll", "0"], {"SQUACHSIM_PAGE": "5", "SQUACHSIM_FONTS": "222322", "SQUACHSIM_FONTPREVIEW": "3"}, 1900, "APPEARANCE > FONTS. SLIDE UNTIL YOU CAN READ IT."),
+        ("clear", 40, 50, ["--bg", "5"], {"SQUACHSIM_FONTS": "222322", "SQUACHSIM_SAY": "Is this big enough for you?", "SQUACHSIM_BATT": "80"}, 1800, "BIGGER BUBBLES. AND UNDER THE TILES NOW."),
+    ],
+    # v1.37.0 "Video Killed the Radio Star", 320x240: the igloo crossing SNOWFALL with two
+    # eyes in its door, then M3@ty out beside Squachy (--pet 6) talking, eating
+    # a catch (SQUACHSIM_CLIPCATCH drops one in), the hot dog (SQUACHSIM_MEATY=1),
+    # a throw hard enough to split him in three, and the igloo hide (=0).
+    "video-killed-the-radio-star": [
+        ("clear", 105, 70, ["--noseed", "--bg", "7"], {"SQUACHSIM_BATT": "80"}, 1500, "SOMEBODY LIVES IN THAT IGLOO. KNOCK THREE TIMES."),
+        ("clear", 40, 90, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_BATT": "80"}, 1500, "MEET M3@TY. HE'S HELPING. YOU JUST CAN'T TELL YET."),
+        ("clear", 40, 80, ["--noseed", "--bg", "0", "--pet", "6"], {"SQUACHSIM_CLIPCATCH": "0"}, 1500, "HE EATS EVERY CATCH. PLEASE STOP EATING THE EVIDENCE."),
+        ("clear", 40, 90, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_MEATY": "1"}, 1300, "YOU WANNA SEE A HOT DOG? HE CAN DO A HOT DOG."),
+        ("clear", 40, 100, ["--noseed", "--bg", "5", "--pet", "6"], {"SQUACHSIM_THROW": "c:-1:0:-150:-120"}, 1800, "THROW HIM. OKAY, NOW THERE'S THREE OF HIM."),
+        ("clear", 40, 80, ["--noseed", "--bg", "7", "--pet", "6"], {"SQUACHSIM_MEATY": "0"}, 1500, "SCARE HIM AND HE'S AN IGLOO. NOBODY'S HOME."),
+    ],
+    # v1.36.0 "Highway to the Danger Zone", at the Marauder V8's 320x240: the
+    # GPS fix on the main screen over SYNTHWAVE (--gps feeds the sample's
+    # fix, at a Sydney Harbour landmark; the battery lamp at its new double
+    # size), DIAGNOSTICS mid-drive (--gps fills the wardrive lines), then the
+    # yeti: tapped into the disco (SQUACHSIM_YETI=0), the floss (=1), and
+    # thrown mid-disco (SQUACHSIM_YETI brings him on first), landing "OOF."
+    # and stomping off "NOT TOY."
+    "highway-to-the-danger-zone": [
+        ("clear", 40, 50, ["--noseed", "--bg", "10", "--gps"], {"SQUACHSIM_BATT": "80"}, 1500, "NEW BOARD: THE MARAUDER V8. GPS LOCKED."),
+        ("diagnostics", 10, 1, ["--gps"], {}, 2300, "WARDRIVE IT. A WIGLE FILE, STRAIGHT TO THE SD CARD."),
+        ("clear", 40, 70, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "0", "SQUACHSIM_BATT": "80"}, 1300, "TAP THE YETI: SATURDAY NIGHT YETI"),
+        ("clear", 40, 70, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "1", "SQUACHSIM_BATT": "80"}, 1300, "TAP AGAIN: THE FLOSS"),
+        ("clear", 40, 90, ["--noseed", "--bg", "5", "--pet", "2"], {"SQUACHSIM_YETI": "0", "SQUACHSIM_THROW": "c:-1:0:170:-110", "SQUACHSIM_BATT": "80"}, 2000, "THROW HIM. OOF. HE IS NOT A TOY."),
+    ],
+    # v1.35.0 "Pump Up the Jam", shot on the 3.5in CBD (480x320). A GIF has no
+    # sound, so the captions carry it: the SOUND and VOLUME rows
+    # (SQUACHSIM_SPEAKER lists them; the emulator has no speaker), then each
+    # moment that makes a noise -- a throw and its landing, C1iPPY thrown, a
+    # catch popping toast, a visitor walking in, the cable going in -- then
+    # BRIGHT's new buttons and the POWER OFF note (SQUACHSIM_POWEROFF).
+    "pump-up-the-jam": [
+        ("settings", 10, 14, ["--scroll", "0"], {"SQUACHSIM_SPEAKER": "1"}, 1900, "SQUACHY GOT A SPEAKER. IT STARTS AT 25%. TRUST US."),
+        ("clear", 40, 70, ["--noseed", "--bg", "5"], {"SQUACHSIM_THROW": "s:200:190:330:150", "SQUACHSIM_BATT": "80"}, 1300, "THROW HIM: WHEEE... SPLAT."),
+        ("clear", 30, 60, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_THROW": "c:-1:0:-220:-120", "SQUACHSIM_BATT": "80"}, 1300, "C1IPPY GOES BOING"),
+        ("clear", 10, 64, ["--noseed", "--bg", "2", "--pet", "4"], {"SQUACHSIM_CLIPCATCH": "1", "SQUACHSIM_BATT": "80"}, 1300, "A CATCH: THE TOASTER GOES PTOING"),
+        ("clear", 4, 60, ["--noseed", "--bg", "10", "--peer", "2", "--peername", "YETI"], {"SQUACHSIM_BATT": "80"}, 1300, "A VISITOR WALKS IN: YOO-HOO!"),
+        ("clear", 40, 45, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54c"}, 1300, "PLUG IN: POWER UP!"),
+        ("settings", 10, 12, ["--scroll", "6"], {"SQUACHSIM_PAGE": "1"}, 1600, "BRIGHT GOT REAL - AND + BUTTONS"),
+        ("clear", 20, 24, ["--noseed", "--bg", "5"], {"SQUACHSIM_POWEROFF": "1", "SQUACHSIM_BATT": "80"}, 1900, "HOLD BOOT THREE SECONDS: LIGHTS OUT"),
+    ],
+    # v1.34.0 "Lava Lamp", shot on the 3.5in CBD (480x320): the battery lamp
+    # (SQUACHSIM_BATT gives the emulator a cell: 54, 54c on the cable, 6 nearly
+    # flat), the big text on the SquachMesh warning and the alert, a visitor at
+    # the new size, C1iPPY hopping across when Squachy reaches the edge
+    # (SQUACHSIM_WANDERAT starts the wander in the warm-up, so the capture
+    # opens just before the swap), and his bold balloon after he is thrown.
+    "lava-lamp": [
+        ("clear", 40, 45, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54"}, 1300, "YOUR BATTERY IS A LAVA LAMP NOW"),
+        ("clear", 40, 50, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "54c"}, 1300, "PLUG IN: BUBBLES AND A RAINBOW"),
+        ("clear", 40, 40, ["--noseed", "--bg", "5"], {"SQUACHSIM_BATT": "6"}, 1300, "NEARLY FLAT: A DYING BULB"),
+        ("meshwarn", 10, 1, [], {}, 2200, "BIG TEXT ON THE 3.5 INCH"),
+        ("alert", 40, 1, [], {}, 2000, "AND IGNORE, IN BOLD"),
+        ("clear", 90, 40, ["--noseed", "--bg", "10", "--peer", "2", "--peername", "YETI"], {"SQUACHSIM_BATT": "80"}, 1300, "VISITORS STAND BIGGER"),
+        ("clear", 200, 36, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_WANDER": "1", "SQUACHSIM_WANDERAT": "0", "SQUACHSIM_BATT": "80"}, 1300, "PETS HOP. NO MORE TELEPORTING."),
+        ("clear", 30, 88, ["--noseed", "--bg", "5", "--pet", "3"], {"SQUACHSIM_THROW": "c:-1:0:-220:-120", "SQUACHSIM_BATT": "80"}, 2200, "THROW C1IPPY. HE HAS NOTES. IN BOLD."),
+    ],
     # v1.33.0 "Doin Time": the arrest (SQUACHSIM_JAIL=1 runs the sirens and
     # the ball drop from frame 0), the sentence in STRIPES with the ball
     # talking (=2 is already serving), a throw the chain stops short, the
@@ -293,6 +394,8 @@ CLIPS = {
 # 1 there: 480x320 doubled is a 960-pixel GIF, which is more than the notes
 # embed at anyway.
 CLIP_SIZE = {
+    "pump-up-the-jam": (480, 320, 1),
+    "lava-lamp":      (480, 320, 1),
     "all-ears":            (240, 240, 2),
     "squachwatch-squared": (240, 240, 2),
     "the-big-screen": (480, 320, 1),

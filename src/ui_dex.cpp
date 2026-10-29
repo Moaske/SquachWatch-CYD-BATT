@@ -29,7 +29,7 @@ void panel(TFT_eSPI& t, int x, int y, int w, int h, uint16_t edge) {
 void grid(int w, int h, int& cols, int& rows, int& gx, int& gy, int& cw, int& ch) {
     cols = w > h ? 6 : 4;
     rows = (Dex::ENTRIES + cols - 1) / cols;
-    const int top = TOP + Theme::LIST_HEADING_H + 2;
+    const int top = TOP + Theme::listHeadingH() + (Theme::large() ? 4 : 2);
     const int bottom = h - Theme::pinnedBackH(w) - 4;
     const int pad = 4, gap = 3;
     cw = (w - 2 * pad - (cols - 1) * gap) / cols;
@@ -53,7 +53,7 @@ void drawIndex(TFT_eSPI& t, int w, int h, const DetectionEngine& eng) {
     snprintf(head, sizeof head, "%u OF %u CAUGHT", (unsigned)got, (unsigned)Dex::ENTRIES);
     Theme::drawListHeading(t, head, got == Dex::ENTRIES ? Theme::AMBER : Theme::CYAN);
 
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     for (uint8_t i = 0; i < Dex::ENTRIES; i++) {
         const int x = gx + (i % cols) * (cw + 3);
         const int y = gy + (i / cols) * (ch + 3);
@@ -78,9 +78,11 @@ void drawIndex(TFT_eSPI& t, int w, int h, const DetectionEngine& eng) {
 
         // The icon, the same one the alert and the LOG draw; a silhouette
         // behind BINGO's scanline veil until it has been caught.
-        const int s = (cw < ch ? cw : ch) / 2 - 6;
+        // A little smaller and higher on the large panels, clear of the
+        // body-font name under it.
+        const int s = (cw < ch ? cw : ch) / 2 - (Theme::large() ? 10 : 6);
         if (s >= 4) {
-            Theme::drawTypeIcon(t, type, x + cw / 2, y + ch / 2 - 2, s);
+            Theme::drawTypeIcon(t, type, x + cw / 2, y + ch / 2 - (Theme::large() ? 6 : 2), s);
             if (!have)
                 for (int ly = y + 1; ly < y + ch - 1; ly += 2)
                     t.drawFastHLine(x + 1, ly, cw - 2, panelFill());
@@ -93,6 +95,7 @@ void drawIndex(TFT_eSPI& t, int w, int h, const DetectionEngine& eng) {
         t.setCursor(x + (cw - tw) / 2, y + ch - t.fontHeight() - 2);
         t.print(name);
     }
+    Theme::bodyFontOff(t);
 }
 
 // ---- a card --------------------------------------------------------------
@@ -127,10 +130,10 @@ void drawCard(TFT_eSPI& t, int w, int h, const DetectionEngine& eng) {
              have ? Dex::shortName(type) : "?????", st, Dex::rarityName(Dex::rarity(type)));
     Theme::drawListHeading(t, head, have ? col : Theme::W95_LIGHT);
 
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     const int lh = t.fontHeight() + 2;
     const bool wide = w > h;
-    const int top = TOP + Theme::LIST_HEADING_H + 4;
+    const int top = TOP + Theme::listHeadingH() + 4;
     const int bottom = bar.y - 4;
 
     // Left (or top): the icon in a box, and the record under it.
@@ -238,6 +241,7 @@ void drawCard(TFT_eSPI& t, int w, int h, const DetectionEngine& eng) {
         }
     }
 
+    Theme::bodyFontOff(t);
     Theme::drawButton(t, bar.x[0], bar.y, bar.w[0], bar.h, "[ < ]", false);
     Theme::drawButton(t, bar.x[1], bar.y, bar.w[1], bar.h, "[ DEX ]", false);
     Theme::drawButton(t, bar.x[2], bar.y, bar.w[2], bar.h, "[ > ]", false);

@@ -14,20 +14,24 @@
 
 namespace {
 
-const int TOP_MARGIN = Theme::LIST_TOP + Theme::LIST_HEADING_H;   // under the heading
+// Under the heading. Asked at draw time: the heading grows on the large
+// panels, and that is only known once setLarge() has run at boot.
+int topMargin() { return Theme::LIST_TOP + Theme::listHeadingH(); }
 const uint8_t ROW_N = 8;     // BACK is pinned to the bottom edge now, not a row
 
 // Row height from live font metrics, shared by drawing and hit-testing so
 // the two cannot drift -- the same reason every other row list in this
 // codebase computes it rather than hard-coding it.
 void geom(TFT_eSPI& t, int& top, int& rowH) {
-    top = TOP_MARGIN;
+    top = topMargin();
     t.setTextSize(Theme::uiMenuTextSize(t));
     rowH = t.fontHeight() + Theme::listRowPad();
     // Eight rows at that height run under BACK on a landscape panel, so there
     // they share what room there is instead.
     const int room = t.height() - Theme::pinnedBackH(t.width()) - 2 - top;
-    if (ROW_N * rowH > room && !Theme::compact()) rowH = room / ROW_N;
+    // ...unless FONTS > MENUS made the letters too tall to share it: then
+    // they keep their height and the list scrolls, as on a compact screen.
+    if (ROW_N * rowH > room && !Theme::compact() && room / ROW_N >= t.fontHeight() + 4) rowH = room / ROW_N;
 }
 
 // On a compact screen the rows keep their height and the list scrolls
@@ -46,16 +50,26 @@ void row(TFT_eSPI& t, int w, int y, int hgt, const char* label,
     // the labels sat straight on the dimmed backdrop, and the synthwave sun
     // came through the gaps in every word.
     Theme::drawListRowPanel(t, w, y, hgt);
-    t.setTextSize(Theme::uiMenuTextSize(t));
+    // FONTS > MENUS: a row the bigger size would run off the screen steps
+    // back down, label and value together.
+    Theme::menuFontOn(t, false);
+    while (t.textWidth(label) + (value ? t.textWidth(value) + 8 : 0) > w - 16 && Theme::menuFontSmaller(t)) {}
     t.setTextWrap(false);
     t.setTextColor(Theme::VAPOR_PINK, Theme::BG);
-    t.setCursor(8, y + (hgt - t.fontHeight()) / 2);
+    // On the large panels the taller heading leaves 31-row rows in landscape,
+    // and centring on the row put the letters' backing over the panel's
+    // bottom edge; centred on the panel (drawListRowPanel's inset) they clear.
+    const int ty = Theme::large() ? y + 1 + (hgt - 4 - t.fontHeight()) / 2
+                                  : y + (hgt - t.fontHeight()) / 2;
+    t.setCursor(8, ty);
     t.print(label);
-    if (!value) return;
-    t.setTextColor(valueCol, Theme::BG);
-    const int vw = t.textWidth(value);
-    t.setCursor(w - 8 - vw, y + (hgt - t.fontHeight()) / 2);
-    t.print(value);
+    if (value) {
+        t.setTextColor(valueCol, Theme::BG);
+        const int vw = t.textWidth(value);
+        t.setCursor(w - 8 - vw, ty);
+        t.print(value);
+    }
+    t.setTextFont(1);
 }
 
 } // namespace
@@ -111,7 +125,7 @@ void uiMeshMenuTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool 
     row(t, w, rowY(3), rowH, "HEADS-UP", Settings::meshHeadsUp() ? "ON" : "OFF",
         Settings::meshHeadsUp() && MeshTalk::ready() ? Theme::GREEN : Theme::W95_SHADOW);
     row(t, w, rowY(4), rowH, "CROWD", Settings::meshCrowdLabel(),
-        Settings::meshCrowd() > 1 ? Theme::GREEN : Theme::W95_SHADOW);
+        Settings::meshCrowd() > 1 ? Theme::GREEN : Settings::meshCrowd() == 0 ? Theme::AMBER : Theme::W95_SHADOW);
     // Everybody who has ever held the phrase, here or not.
     char sq[12];
     const uint8_t members = MeshTalk::rosterCount();
@@ -132,7 +146,7 @@ void uiMeshMenuTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool 
                      : d      ? "You see them. They cannot see you."
                      : x      ? "They see you. You cannot see them."
                               : "Off. Nothing sent, nothing shown.";
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     t.setTextColor(Theme::W95_LIGHT, Theme::BG);
     // Seven rows leave no room under them in landscape, so there the one
     // line that matters most sits beside the heading instead: a warning
@@ -160,9 +174,10 @@ void uiMeshMenuTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool 
         const bool warn = mnote && strcmp(mnote, "Messages: reading and replying.") != 0;
         const char* one = warn ? mnote : note;
         t.setTextColor(warn ? Theme::AMBER : Theme::W95_LIGHT, Theme::BG);
-        t.setCursor(w - 8 - t.textWidth(one), Theme::LIST_TOP + (Theme::LIST_HEADING_H - t.fontHeight()) / 2);
+        t.setCursor(w - 8 - t.textWidth(one), Theme::listHeadingY(t));
         t.print(one);
     }
+    Theme::bodyFontOff(t);
     Theme::drawPinnedBack(t, "[ BACK ]");
 }
 

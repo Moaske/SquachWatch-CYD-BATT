@@ -6,6 +6,9 @@
 #include "detection.h"
 #include "ignore_list.h"
 #include <Arduino.h>
+#if defined(CYD_GPS)
+#include "sd_row.h"   // degreesText() for the place line
+#endif
 
 static const char* targetLabel(DetectionType t) {
     switch (t) {
@@ -148,7 +151,20 @@ void uiAlertSetNight(bool night) { s_night = night; }
 void uiAlertSetLastFree(bool lastFree) { s_lastFree = lastFree; }
 static bool     s_spam      = false;
 static uint16_t s_spamFakes = 0;
+static const char* s_snzLabel = nullptr;
+static uint16_t    s_snzLeft  = 0;
+void uiAlertSetSnoozePick(const char* label, uint16_t left) {
+    s_snzLabel = label;
+    s_snzLeft  = left > 1000 ? 1000 : left;
+}
 void uiAlertSetSpam(bool spam, uint16_t fakes) { s_spam = spam; s_spamFakes = fakes; }
+#if defined(CYD_GPS)
+static bool    s_place = false, s_placeFake = false;
+static int32_t s_placeLat7 = 0, s_placeLon7 = 0;
+void uiAlertSetPlace(bool has, int32_t lat7, int32_t lon7, bool fake) {
+    s_place = has; s_placeLat7 = lat7; s_placeLon7 = lon7; s_placeFake = fake;
+}
+#endif
 
 void uiAlertInit(TFT_eSPI& t, const Detection& d) {
     s_last = d;
@@ -156,6 +172,10 @@ void uiAlertInit(TFT_eSPI& t, const Detection& d) {
     s_night = false;
     s_lastFree = false;
     s_spam     = false;
+    s_snzLabel = nullptr;
+#if defined(CYD_GPS)
+    s_place    = false;   // a card never shows an earlier alert's place
+#endif
     s_touched = false;
     s_alertStart = millis();
     s_glitchStep = 0;
@@ -423,14 +443,18 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
     const bool tiny = tinyAlert(h);
     const bool wide = (w >= 300 && w > h) || tiny;
     const int PLATE_X = tiny ? 6 : (wide ? 12 : 14);
-    const int PLATE_Y = stripHOf(w, h) + (tiny ? 4 : 12);
+    // Lower on the large panels: the FIRST / AT NIGHT line above it is the
+    // 16-row body font there, and at 12 it sat on the plate's top edge.
+    const int PLATE_Y = stripHOf(w, h) + (tiny ? 4 : Theme::large() ? 20 : 12);
+    // The large panels in portrait take the big plate too: full width there,
+    // and the size-2 readout fits it (the MAC is 204 of its 292 pixels).
+    const bool  bigPlate = wideAlert(w) || (Theme::large() && !wide);
     const int PLATE_W = tiny ? 156 : (wideAlert(w) ? 250 : (wide ? 168 : (w - 28)));
-    const int PLATE_H = tiny ? 70 : (wideAlert(w) ? 152 : 98);
+    const int PLATE_H = tiny ? 70 : (bigPlate ? 152 : 98);
 
     // Where each line sits inside the plate. The old numbers were measured
     // against a 98px card and a size-1 readout; a wide panel gets a 138px card
     // and a size-2 one, so they are re-measured rather than stretched.
-    const bool  bigPlate = wideAlert(w);
     const uint8_t readSz = bigPlate ? 2 : 1;
     const int NAME_DY  = tiny ? 22 : (bigPlate ?  46 : 38);
     const int MAC_DY   = tiny ? 32 : (bigPlate ?  66 : 50);
@@ -539,26 +563,50 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         // AT NIGHT: they are about one catch, and this is about the room.
         char fl[32];
         snprintf(fl, sizeof fl, "* SPAM: %u FAKE TAGS *", (unsigned)s_spamFakes);
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::RED, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     } else if (s_first || s_night) {
         const char* fl = (s_first && s_night) ? "* FIRST, AND AT NIGHT *"
                        : s_first ? "* FIRST OF ITS KIND *" : "* AT NIGHT *";
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::VAPOR_YELLOW, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     } else if (s_lastFree) {
         // Shares the line, and loses it to FIRST or AT NIGHT, both of which
         // are about the catch itself. This one is housekeeping.
         const char* fl = "* QUIET UNLESS IT NEARS *";
-        t.setTextSize(1);
+        Theme::bodyFontOn(t);
         t.setTextColor(Theme::CYAN, Theme::BG);
         t.setCursor(PLATE_X + (PLATE_W - t.textWidth(fl)) / 2, tiny ? PLATE_Y + NAME_DY : stripHOf(w, h) + 2);
         t.print(fl);
+        Theme::bodyFontOff(t);
     }
+#if defined(CYD_GPS)
+    // Where it was caught, from a fresh GPS fix. In the banner's line when
+    // there is no banner; else under the plate when the gauge is beside it,
+    // or under the gauge when it is below. Not on the tiny layout, and never
+    // on a locked card: it would show where the owner was.
+    if (s_place && !s_redacted && !tiny) {
+        char la[16], lo[16], pl[40];
+        SdRow::degreesText(la, sizeof la, s_placeLat7, 5);
+        SdRow::degreesText(lo, sizeof lo, s_placeLon7, 5);
+        snprintf(pl, sizeof pl, "%s, %s%s", la, lo, s_placeFake ? " FAKE" : "");
+        const int py = !banner ? stripHOf(w, h) + 2
+                     : wide    ? PLATE_Y + PLATE_H + 3
+                               : PLATE_Y + PLATE_H + 62;
+        t.setTextSize(1);
+        if (py + t.fontHeight() <= h - 56) {
+            t.setTextColor(Theme::CYAN, Theme::BG);
+            t.setCursor(PLATE_X + (PLATE_W - t.textWidth(pl)) / 2, py);
+            t.print(pl);
+        }
+    }
+#endif
 
     // ---- the gauge -----------------------------------------------------
     // The detected thing, drawn large with the instrument grid over the top
@@ -631,8 +679,10 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         // one. Win95 had a word for a button that stays in after you let go
         // and this is it, so the state costs no new colour, no legend and
         // nothing to learn: the thing is pushed in, and pushed in means done.
+        // In bold (asked for 2026-10-10): it is the one button here that
+        // changes what the device does from now on.
         Theme::drawWin95Button(t, bx, by, bw, bh,
-                               already ? "MUTED" : "IGNORE", already);
+                               already ? "MUTED" : "IGNORE", already, true);
     }
 
     {
@@ -679,11 +729,38 @@ void uiAlertTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng,
         t.setCursor(bx + (bw - hw) / 2, by + (bh - t.fontHeight()) / 2);
         t.print("HUNT");
     }
-    // SNOOZE between the two: this device, quiet until the board restarts.
+    // SNOOZE between the two: this device, quiet for a while. Each tap
+    // steps the time up (main.cpp owns the steps); while one is being
+    // picked the button stays pushed in and wears it, and a line along its
+    // foot runs out as the pick locks in.
     {
         int bx, by, bw, bh;
         snoozeBtnRect(w, h, bx, by, bw, bh);
-        Theme::drawButton(t, bx, by, bw, bh, "SNOOZE", false);
+        Theme::drawButton(t, bx, by, bw, bh, s_snzLabel ? s_snzLabel : "SNOOZE",
+                          s_snzLabel != nullptr);
+        if (s_snzLabel) {
+            const int barW = (int)((int32_t)(bw - 6) * s_snzLeft / 1000);
+            t.fillRect(bx + 3, by + bh - 4, bw - 6, 2, Theme::BG);
+            if (barW > 0) t.fillRect(bx + 3, by + bh - 4, barW, 2, Theme::AMBER);
+            // Nothing else on the card says the button counts taps, so once
+            // the first one has landed it says so itself, just above.
+            // Asked for 2026-10-22: "no way to realize you have to multi tap".
+            static const char* HINT = "TAP AGAIN: LONGER";
+            t.setTextFont(wideAlert(w) ? 2 : 1);
+            t.setTextSize(1);
+            t.setTextWrap(false);
+            const int hw = t.textWidth(HINT);
+            const int fh = t.fontHeight();
+            const int hx = (w - hw) / 2;
+            // The large panel has 18 rows between the radar's frame and the
+            // button for a 16-row font, so it sits tight against the button.
+            const int hy = by - fh - (wideAlert(w) ? 1 : 5);
+            t.fillRect(hx - 3, hy - 1, hw + 6, fh + 1, Theme::BG);
+            t.setTextColor(Theme::AMBER, Theme::BG);
+            t.setCursor(hx, hy);
+            t.print(HINT);
+            t.setTextFont(1);
+        }
     }
 
     // TV-static snow over the whole screen during the same random burst

@@ -41,12 +41,15 @@
 #define LOAD_FONT4
 #define SMOOTH_FONT
 
-// Freenove's own rate for this panel, and the ceiling: measured 2026-09-25,
-// 80 MHz (on HSPI and on FSPI's IO_MUX pins alike -- the port changed
-// nothing, 24.6 ms a frame either way) garbles the display. The CYD's
-// ILI9341 does not hold 80 MHz either (cyd-ili9341 has no -fast build).
+// 80 MHz, by DMA. Through the library's own push, 80 MHz garbled this panel
+// (measured 2026-09-25, on HSPI and on FSPI's IO_MUX pins alike), and 40 was
+// Freenove's own rate and the ceiling. The DMA push (frame_push.cpp, the
+// driver's own transfers from bounce buffers) runs it clean at 80: every
+// screen checked by eye on an FNK0104B on 2026-10-09, 39-40 fps against 34
+// at 40 MHz. If a panel ever shows torn or speckled rows, build with
+// -DSPI_FREQUENCY=40000000.
 #ifndef SPI_FREQUENCY
-#define SPI_FREQUENCY         40000000
+#define SPI_FREQUENCY         80000000
 #endif
 #define SPI_READ_FREQUENCY    20000000
 

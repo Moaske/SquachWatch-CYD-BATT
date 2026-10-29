@@ -2,9 +2,15 @@
 #include <TFT_eSPI.h>
 #if defined(NM_CYD_C5)
 #include <soc/pcr_reg.h>
+#endif
+#if defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
 #include <esp_heap_caps.h>
 #include <driver/spi_master.h>
 #include <string.h>
+#endif
+#if SQW_PUSH_QSPI
+#include "st77922_qspi.h"
+#elif defined(NM_CYD_C5) || SQW_PUSH_DMA_ONLY
 // The driver's device handle: a global in the processor port the library
 // compiles in, outside any namespace.
 extern spi_device_handle_t dmaHAL;
@@ -84,7 +90,7 @@ bool begin() {
     for (int i = 0; i < 256; i++) s_lut[i] = rgb332Wire((uint8_t)i);
     s_ready = true;
     Serial.println("[push] overlapped frame push on, unchanged rows skipped");
-#if defined(SQW_PUSH_PROBE)
+#if defined(SQW_PUSH_PROBE) && !SQW_PUSH_DMA_ONLY
     // Bring-up probe: is the frame push slow because of the wire or the CPU?
     Serial.printf("[probe] cpu %u MHz, apb %u Hz, SPI_CLOCK_REG=0x%08X SPI_USER_REG=0x%08X\n",
                   (unsigned)ESP.getCpuFreqMHz(), (unsigned)getApbFrequency(),
@@ -118,6 +124,7 @@ static inline uint32_t rowHash(const uint8_t* row, int32_t w) {
     return h;
 }
 
+#if !SQW_PUSH_DMA_ONLY
 // Latching the transfer registers, which is not free on every ESP32.
 //
 // On the original ESP32 and the S3, writing SPI_USR is enough: the length in
@@ -175,6 +182,7 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
     }
     while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT)) & SPI_USR) {}
 }
+#endif  // !SQW_PUSH_DMA_ONLY
 
 // The ESP32-C5's SPI clock, raised from inside the transaction.
 //
@@ -229,7 +237,6 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 // rated 2.5 MHz, and an SD card at 13 MHz instead of 4. Nothing would report
 // an error; touch would just start missing presses. Raised here, restored
 // here, and only ever while this file owns the bus.
-#if defined(NM_CYD_C5)
 
 // ---- the wire by DMA: step one of overlapping the push with the drawing --
 // On this chip the push is 20 ms of a 50 ms frame, and the register push
@@ -245,33 +252,140 @@ static void pushPixels(const uint8_t* p, uint32_t total) {
 // task of its own and the waiting goes to the drawing (step two).
 //
 // -DSQW_C5_DMA=0 is the register push, unchanged.
+//
+// The Freenove S3 takes this same route, and only this route: the S3 has no
+// register push to fall back on (frame_push.h), so a driver that will not
+// start hands the frame back to pushSprite().
 #ifndef SQW_C5_DMA
 #define SQW_C5_DMA 1
 #endif
-#if SQW_C5_DMA
+#if (defined(NM_CYD_C5) && SQW_C5_DMA) || SQW_PUSH_DMA_ONLY
+#define SQW_PUSH_DMA 1
+#else
+#define SQW_PUSH_DMA 0
+#endif
+#if SQW_PUSH_DMA
+// Set by busWant(), cleared when the waiter takes the lock; read by the SPI
+// push (pushRowsDma) to step aside mid-frame. Here, not beside that push,
+// because the QSPI board has no such push and still defines busWant().
+static volatile bool s_busWanted = false;
+// Whether the panel's device holds the IDF driver's bus (a frame in flight;
+// on the T-Deck and the Freenove S3, always, once the first frame has gone).
+// Same reason as above.
+static volatile bool s_pushHolds = false;   // the panel's device holds the driver's bus (a frame in flight)
 static uint16_t* s_bounce[2] = { nullptr, nullptr };
 static int32_t   s_bounceW  = 0;
 static int8_t    s_dmaState = 0;             // 0 untried, 1 on, -1 not available
 static const int32_t CHUNK_ROWS = 8;
 
-static bool c5Dma(TFT_eSPI& tft, int32_t w) {
+#if SQW_PUSH_QSPI
+// Panel rows a chunk: 32 x 320 x 2 bytes, 20 KB a buffer. Wider than the SPI
+// boards' eight because in landscape a chunk of panel rows is a run of 32
+// logical COLUMNS, and 32 bytes of a logical row is one cache line of the
+// frame in PSRAM -- one fetch per logical row per chunk instead of one per
+// pixel, which is the difference between a push and a crawl.
+static const int32_t QSPI_CHUNK_ROWS = 32;
+
+static bool pushDma(TFT_eSPI&, int32_t) {
+    if (s_dmaState) return s_dmaState > 0;
+    s_dmaState = -1;
+    if (!St77922::ready()) { Serial.println("[push] QSPI: the panel never came up"); return false; }
+    for (int k = 0; k < 2; k++)
+        s_bounce[k] = (uint16_t*)heap_caps_malloc((size_t)St77922::PANEL_W * QSPI_CHUNK_ROWS * sizeof(uint16_t),
+                                                  MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!s_bounce[0] || !s_bounce[1]) { Serial.println("[push] QSPI: no room for the bounce buffers"); return false; }
+    s_dmaState = 1;
+    Serial.printf("[push] QSPI on: %d-row chunks of %u bytes, heap %lu\n",
+                  (int)QSPI_CHUNK_ROWS, (unsigned)(St77922::PANEL_W * QSPI_CHUNK_ROWS * 2), (unsigned long)ESP.getFreeHeap());
+    return true;
+}
+
+// Logical rows [r0, r1) of a w x h frame in rotation `rot`, to the panel.
+// The panel is addressed in its own portrait frame, so a span of logical
+// rows is a band of panel rows in portrait and a band of panel COLUMNS in
+// landscape; the window is set once and the band streams out in chunks of
+// panel rows, each converted from the 8-bit frame as it goes. The mapping is
+// touch_fit.h's screenToNative, the same one St77922TFT::toPanel() uses for
+// rectangles, so a tap lands where the pixel went in all four rotations.
+static void pushSpanQspi(const uint8_t* src, int32_t w, int32_t h, uint8_t rot, int32_t r0, int32_t r1) {
+    (void)h;
+    const int32_t W = St77922::PANEL_W, H = St77922::PANEL_H;
+    int32_t px0, py0, px1, py1;
+    switch (rot & 3) {
+        case 0:  px0 = 0;      px1 = w - 1;      py0 = r0;     py1 = r1 - 1;     break;
+        case 1:  px0 = W - r1; px1 = W - 1 - r0; py0 = 0;      py1 = w - 1;      break;
+        case 2:  px0 = 0;      px1 = w - 1;      py0 = H - r1; py1 = H - 1 - r0; break;
+        default: px0 = r0;     px1 = r1 - 1;     py0 = 0;      py1 = w - 1;      break;
+    }
+    St77922::setWindow((int16_t)px0, (int16_t)py0, (int16_t)px1, (int16_t)py1);
+    const int32_t wOut = px1 - px0 + 1;
+    bool first = true;
+    int  k = 0;
+    for (int32_t py = py0; py <= py1; py += QSPI_CHUNK_ROWS, k++) {
+        const int32_t left = py1 - py + 1;
+        const int32_t n = left < QSPI_CHUNK_ROWS ? left : QSPI_CHUNK_ROWS;
+        uint16_t* b = s_bounce[k & 1];
+        switch (rot & 3) {
+            case 0:
+                for (int32_t i = 0; i < n; i++) {
+                    const uint8_t* s = src + (size_t)(py + i) * (size_t)w;
+                    uint16_t* d = b + i * wOut;
+                    for (int32_t x = 0; x < wOut; x++) d[x] = s_lut[s[x]];
+                }
+                break;
+            case 2:
+                for (int32_t i = 0; i < n; i++) {
+                    const uint8_t* s = src + (size_t)(H - 1 - (py + i)) * (size_t)w;
+                    uint16_t* d = b + i * wOut;
+                    for (int32_t x = 0; x < wOut; x++) d[x] = s_lut[s[w - 1 - x]];
+                }
+                break;
+            case 1:
+                // Panel row py+i is logical column py+i; panel column px is
+                // logical row W-1-px. One cache line of each logical row.
+                for (int32_t ly = r0; ly < r1; ly++) {
+                    const uint8_t* s = src + (size_t)ly * (size_t)w + py;
+                    uint16_t* d = b + ((W - 1 - ly) - px0);
+                    for (int32_t i = 0; i < n; i++) d[i * wOut] = s_lut[s[i]];
+                }
+                break;
+            default:
+                // Panel row py+i is logical column w-1-(py+i); panel column
+                // px is logical row px.
+                for (int32_t ly = r0; ly < r1; ly++) {
+                    const uint8_t* s = src + (size_t)ly * (size_t)w + (w - 1 - py);
+                    uint16_t* d = b + (ly - px0);
+                    for (int32_t i = 0; i < n; i++) d[i * wOut] = s_lut[s[-i]];
+                }
+                break;
+        }
+        St77922::queuePixels(b, (size_t)n * (size_t)wOut, first);
+        first = false;
+    }
+    St77922::wait();
+}
+#else
+
+static bool pushDma(TFT_eSPI& tft, int32_t w) {
     if (s_dmaState) return s_dmaState > 0 && s_bounceW == w;
     s_dmaState = -1;
     for (int k = 0; k < 2; k++)
         s_bounce[k] = (uint16_t*)heap_caps_malloc((size_t)w * CHUNK_ROWS * sizeof(uint16_t),
                                                   MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_bounce[0] || !s_bounce[1]) {
-        Serial.println("[push] C5 DMA: no room for the bounce buffers; the register push stays");
+        Serial.println("[push] DMA: no room for the bounce buffers; the plain push stays");
         return false;
     }
-    if (!tft.initDMA(false)) {
-        Serial.println("[push] C5 DMA: the driver would not start; the register push stays");
+    // initDMA() says no when it has already been done -- which it has on the
+    // T-Deck, whose LoRa radio shares this bus and set it up first.
+    if (!tft.initDMA(false) && !tft.DMA_Enabled) {
+        Serial.println("[push] DMA: the driver would not start; the plain push stays");
         return false;
     }
     tft.setSwapBytes(false);                 // the table is already in wire order
     s_bounceW  = w;
     s_dmaState = 1;
-    Serial.printf("[push] C5 DMA on: %d-row chunks of %u bytes, heap %lu\n",
+    Serial.printf("[push] DMA on: %d-row chunks of %u bytes, heap %lu\n",
                   (int)CHUNK_ROWS, (unsigned)(w * CHUNK_ROWS * 2), (unsigned long)ESP.getFreeHeap());
     return true;
 }
@@ -283,8 +397,16 @@ static bool c5Dma(TFT_eSPI& tft, int32_t w) {
 // printed. This pass goes through the driver's POLLING transmit instead --
 // no interrupt, the driver spins on the hardware itself -- and says where it
 // is, to tell "the transfer never starts" from "the interrupt never comes".
-static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
+// Returns the rows sent. Fewer than asked when something else asked for the
+// bus (busWant()): the chunk in flight finishes, the rest waits -- the caller
+// steps aside and sets the window again for what is left. A LoRa radio on
+// this bus has a preamble to catch, and the ~30 ms of a whole frame was too
+// long to wait (the T-Deck heard MeshCore's preambles and missed every
+// header, 2026-10-12); a chunk is about a millisecond.
+static void busStepAside();   // below, with the bus mutex it hands over
+static int32_t pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows) {
     (void)tft;
+    int32_t pushed = 0;
     // Queued, interrupt-driven, and pipelined: this chunk converts into one
     // bounce buffer while the one before is on the wire from the other, and
     // the wait for each is a block, not a spin -- the task sleeping here is
@@ -329,9 +451,12 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
         inFlight = true;
         p += px;
         rows -= n;
+        pushed += n;
         k++;
+        if (s_busWanted && rows > 0) break;   // the radio is waiting: let it in after this chunk
     }
     if (inFlight) { spi_transaction_t* done = nullptr; spi_device_get_trans_result(dmaHAL, &done, portMAX_DELAY); }
+#if defined(NM_CYD_C5)
     // Back to CPU mode before the library writes a register again. The
     // driver leaves the engine's DMA enables set, and a register-fed
     // transfer with DMA_TX_ENA on waits for descriptors that never come:
@@ -340,8 +465,16 @@ static void pushRowsDma(TFT_eSPI& tft, const uint8_t* p, int32_t w, int32_t rows
     SET_PERI_REG_MASK(SPI_DMA_CONF_REG(SPI_PORT), SPI_BUF_AFIFO_RST | SPI_DMA_AFIFO_RST);
     CLEAR_PERI_REG_MASK(SPI_DMA_CONF_REG(SPI_PORT), SPI_BUF_AFIFO_RST | SPI_DMA_AFIFO_RST);
     SQW_SPI_LATCH();
-}
 #endif
+    // On the S3 the library's own post-transfer callback (dma_end_callback in
+    // its S3 processor port) clears SPI_DMA_CONF_REG after every transaction,
+    // so its register-fed writes work again without any help from here.
+    return pushed;
+}
+#endif  // !SQW_PUSH_QSPI
+#endif  // SQW_PUSH_DMA
+
+#if defined(NM_CYD_C5)
 
 // 0 selects the undivided module clock; 1..63 divide it by N+1.
 #ifndef SQW_C5_SPI_DIV
@@ -396,7 +529,16 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
     if (total % PX_PER_BURST != 0) return false;
 
     // A span has to be whole bursts: 320 wide, any row is; 240 wide, two.
+#if SQW_PUSH_QSPI
+    // On the ST77922 a span of logical rows is a band of panel COLUMNS in
+    // landscape, and the panel keeps its pixels in pairs: a window one
+    // column wide, or starting on an odd column, came out as a smear across
+    // the top of the screen (the title bar's rows, changing every frame).
+    // Four rows at a time keeps every window even on both edges.
+    const int32_t align = 4;
+#else
     const int32_t align = (int32_t)(PX_PER_BURST / gcd32((uint32_t)w, PX_PER_BURST));
+#endif
 
     // A frame is every band of it, so the periodic full refresh counts pushes
     // rather than frames: 64 pushes is 64 frames on one band and 32 on two.
@@ -436,36 +578,94 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
         // for the sizes this is built for) becomes a full push.
         for (int i = 0; i < n; i++)
             if (((uint32_t)(spans[i].r1 - spans[i].r0) * (uint32_t)w) % PX_PER_BURST) { spans[0].r0 = 0; spans[0].r1 = h; n = 1; break; }
+#if !SQW_PUSH_QSPI
         tft.startWrite();
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#endif
+#if SQW_PUSH_DMA
         // By DMA when the driver will have it; the register push, with its
         // raised clock, when not. The driver runs its own clock (see
         // SQW_C5_DMA_HZ), so the raise is only for the register path.
-        const bool dma = c5Dma(tft, w);
+        const bool dma = pushDma(tft, w);
+#if SQW_PUSH_QSPI
+        if (!dma || x != 0 || y != 0) return false;   // whole frames only here
+#elif SQW_PUSH_DMA_ONLY
+        // No register push on this chip: the caller's pushSprite() instead.
+        if (!dma) { tft.endWrite(); return false; }
+#endif
+#endif
+#if defined(NM_CYD_C5)
         // The clock raise even by DMA: startWrite() has just set the SPI
         // clock register to the library's 20 MHz, and the driver programs
         // its own 80 MHz only when a different device last had the bus --
         // with one device it never does again, and its transfers ran at the
         // library's clock (28 Mbit/s measured, 1.45 ms per 2,560 pixels).
-        const uint32_t c5pcr = sqwC5SpiClockRaise();
-        // The bus for the whole frame: the driver's per-transfer lock is a
-        // scheduling point, and on one core that is where the radio tasks
-        // get in between chunks.
-        if (dma) spi_device_acquire_bus(dmaHAL, portMAX_DELAY);
-#elif defined(NM_CYD_C5)
         // Inside the transaction, after beginTransaction has had its say.
         const uint32_t c5pcr = sqwC5SpiClockRaise();
 #endif
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
+        // The bus for the whole frame: the driver's per-transfer lock is a
+        // scheduling point, and on one core that is where the radio tasks
+        // get in between chunks.
+        // On the T-Deck the hold is taken once and KEPT: its radio shares
+        // this host and works in the gaps between chunks and frames, and the
+        // driver's interrupt handler wakes "the device holding the bus" on
+        // its way out of every transaction -- with that changing hands every
+        // frame it dereferenced a stale one, LoadProhibited in
+        // spi_bus_lock_bg_exit every 15 s to 6 min (the black box,
+        // 2026-10-13). Nothing else on that board is a device of this driver.
+        //
+        // The Freenove S3 keeps it too, for a reason that has nothing to do
+        // with a radio. The S3 has two cores and the pusher is not pinned to
+        // either, so it can release the bus on one core while the interrupt
+        // for the frame's last chunk is still on its way out on the other.
+        // The IDF's bg_exit (4.4.6) reads the lock's acquiring device, checks
+        // it, then reads it AGAIN to wake it -- and the release had cleared it
+        // in between: LoadProhibited at address 0 in spi_bus_lock_bg_exit,
+        // from spi_intr, every 10 to 40 minutes (core dump, 2026-10-15). With
+        // the hold never let go, that field never goes back to null. Nothing
+        // else on the Freenove is a device of this driver either. The C5 still
+        // lets go each frame: one core, so the interrupt cannot be mid-exit
+        // while the pusher runs.
+        if (dma && !s_pushHolds) { spi_device_acquire_bus(dmaHAL, portMAX_DELAY); s_pushHolds = true; }
+#endif
         for (int i = 0; i < n; i++) {
             const int32_t r0 = spans[i].r0, r1 = spans[i].r1;
+#if SQW_PUSH_QSPI
+            pushSpanQspi(src, w, h, tft.getRotation(), r0, r1);
+            s_lastRows += r1 - r0;
+            continue;
+#else
             tft.setAddrWindow(x, y + r0, w, r1 - r0);
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#endif
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
             if (dma) {
-                pushRowsDma(tft, src + (size_t)r0 * (size_t)w, w, r1 - r0);
-                s_lastRows += r1 - r0;
+                int32_t at = r0;
+                while (at < r1) {
+                    const int32_t did = pushRowsDma(tft, src + (size_t)at * (size_t)w, w, r1 - at);
+                    s_lastRows += did;
+                    at += did;
+                    if (did == 0 || at >= r1) break;
+                    // Stepping aside: the bus and the panel's select released,
+                    // the lock handed over for as long as the other side needs
+                    // it, then everything taken back and the window set for
+                    // the rows still to go. Only when this task holds the lock
+                    // (the pusher); a caller pushing synchronously carries on.
+                    // The device's hold on the driver is KEPT across the
+                    // hand-over: the T-Deck's radio sends its bytes through
+                    // the host's registers under that hold, the way the
+                    // library's own window writes do. Giving the hold up and
+                    // taking it back here, and the radio taking one of its own,
+                    // hundreds of times a second, ended in the driver's
+                    // interrupt handler on an empty device entry (2026-10-13).
+                    tft.endWrite();
+                    busStepAside();
+                    tft.startWrite();
+                    tft.setAddrWindow(x, y + at, w, r1 - at);
+                }
                 continue;
             }
 #endif
+#if !SQW_PUSH_DMA_ONLY
             WRITE_PERI_REG(SPI_MOSI_DLEN_REG(SPI_PORT), 511);
             // Once per span, not once per burst. Per the C5 TRM (ch.33, SPI
             // Controller): SPI_UPDATE "synchronize[s] SPI registers from APB
@@ -487,14 +687,19 @@ static bool pushNow(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int
             SQW_SPI_LATCH();
             pushPixels(src + (size_t)r0 * (size_t)w, (uint32_t)(r1 - r0) * (uint32_t)w);
             s_lastRows += r1 - r0;
+#endif  // !SQW_PUSH_DMA_ONLY
         }
-#if defined(NM_CYD_C5) && SQW_C5_DMA
-        if (dma) spi_device_release_bus(dmaHAL);
-        sqwC5SpiClockRestore(c5pcr);
-#elif defined(NM_CYD_C5)
+#if SQW_PUSH_DMA && !SQW_PUSH_QSPI
+#if !defined(TDECK_PLUS) && !defined(FREENOVE_S3)
+        if (dma) { s_pushHolds = false; spi_device_release_bus(dmaHAL); }
+#endif
+#endif
+#if defined(NM_CYD_C5)
         sqwC5SpiClockRestore(c5pcr);
 #endif
+#if !SQW_PUSH_QSPI
         tft.endWrite();
+#endif
         SQW_PUSH_CHARGE(s_wireUs, tWire);
     }
     s_valid  = true;
@@ -507,7 +712,7 @@ bool push(TFT_eSPI& tft, const uint8_t* src, int32_t w, int32_t h, int32_t x, in
     return pushNow(tft, src, w, h, x, y);
 }
 
-#if defined(NM_CYD_C5) && SQW_C5_DMA
+#if SQW_PUSH_DMA
 // ---- step two: the push in a task of its own ----------------------------
 // The loop hands over a finished frame (asyncSubmit) and goes on drawing
 // the next into another buffer; this task hashes, converts and pushes it,
@@ -525,14 +730,16 @@ static int32_t           s_jobW = 0, s_jobH = 0, s_jobX = 0, s_jobY = 0;
 static void pusherTask(void*) {
     for (;;) {
         xSemaphoreTake(s_go, portMAX_DELAY);
-        xSemaphoreTake(s_bus, portMAX_DELAY);
+        xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);
         if (!pushNow(*s_tft, s_jobSrc, s_jobW, s_jobH, s_jobX, s_jobY)) {
+#if !SQW_PUSH_QSPI
             // A shape it does not know, or the switch is off: the library's
             // own 8-bit image push, from here, so the frame still arrives.
             s_tft->pushImage(s_jobX, s_jobY, s_jobW, s_jobH, (uint8_t*)s_jobSrc, true, nullptr);
+#endif
             s_valid = false;
         }
-        xSemaphoreGive(s_bus);
+        xSemaphoreGiveRecursive(s_bus);
         xSemaphoreGive(s_done);
     }
 }
@@ -542,13 +749,15 @@ bool asyncBegin(TFT_eSPI& tft) {
     s_tft  = &tft;
     s_go   = xSemaphoreCreateBinary();
     s_done = xSemaphoreCreateBinary();
-    s_bus  = xSemaphoreCreateMutex();
+    // Recursive: on the QSPI board a direct draw takes it from inside a
+    // busLock() the loop already holds (main.cpp's "straight to the panel").
+    s_bus  = xSemaphoreCreateRecursiveMutex();
     if (!s_go || !s_done || !s_bus) return false;
     xSemaphoreGive(s_done);                  // nothing in flight yet
     // Above the loop task (1), below the radios: it wakes for a fifth of a
     // millisecond per chunk and sleeps the rest.
     if (xTaskCreate(pusherTask, "framePush", 4096, nullptr, 3, &s_task) != pdPASS) { s_task = nullptr; return false; }
-    Serial.println("[push] C5: the push runs in its own task; the loop draws while the wire works");
+    Serial.println("[push] the push runs in its own task; the loop draws while the wire works");
     return true;
 }
 
@@ -568,9 +777,33 @@ void asyncWait() {
     xSemaphoreGive(s_done);
 }
 
-void busLock()   { if (s_bus) xSemaphoreTake(s_bus, portMAX_DELAY); }
-void busUnlock() { if (s_bus) xSemaphoreGive(s_bus); }
+// The pusher, mid-frame, letting a waiter in: the lock given up, a yield so
+// the waiter (the same priority) gets the core, and the lock taken back,
+// which blocks until the waiter is done. Only when this task holds it: a
+// synchronous push from the loop carries on.
+static void busStepAside() {
+    if (!s_bus || xSemaphoreGetMutexHolder(s_bus) != xTaskGetCurrentTaskHandle()) return;
+    xSemaphoreGiveRecursive(s_bus);
+    taskYIELD();
+    // The give only makes the waiter READY. The T-Deck's radio task is a
+    // lower priority than this one, or on the other core, and either way
+    // the take below won the race nearly every time: the radio got the bus
+    // only between frames, 14-27 ms of waiting per turn (2026-10-13). So
+    // sleep a tick at a time until it has the lock (busLock() clears the
+    // flag once it does), a few ticks at most.
+    for (int i = 0; i < 4 && s_busWanted; i++) vTaskDelay(1);
+    if (xSemaphoreTakeRecursive(s_bus, pdMS_TO_TICKS(500)) != pdTRUE) {
+        Serial.printf("[push] step-aside: the lock did not come back in 500 ms (holder %p)\n", (void*)xSemaphoreGetMutexHolder(s_bus));
+        xSemaphoreTakeRecursive(s_bus, portMAX_DELAY);
+    }
+}
+void busWant()   { s_busWanted = true; }
+bool pushHoldsBus() { return s_pushHolds; }
+void busLock()   { if (s_bus) xSemaphoreTakeRecursive(s_bus, portMAX_DELAY); s_busWanted = false; }
+void busUnlock() { if (s_bus) xSemaphoreGiveRecursive(s_bus); }
 #else
+void busWant() {}
+bool pushHoldsBus() { return false; }
 bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
@@ -595,6 +828,7 @@ bool asyncBegin(TFT_eSPI&) { return false; }
 bool asyncOn() { return false; }
 bool asyncSubmit(const uint8_t*, int32_t, int32_t, int32_t, int32_t) { return false; }
 void asyncWait() {}
+void busWant() {}
 void busLock() {}
 void busUnlock() {}
 

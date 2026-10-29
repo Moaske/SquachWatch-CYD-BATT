@@ -185,7 +185,11 @@ uint32_t utcEpoch() { return s_rmcEpoch; }
 uint32_t good() { return s_good; }
 uint32_t bad()  { return s_bad; }
 
-bool fresh(uint32_t nowMs) { return s_fix.valid && nowMs - s_fix.atMs < (s_phone ? PHONE_FRESH_MS : FRESH_MS); }
+// Signed, because `nowMs` is often a frame's start and the fix can land later
+// in the same frame: unsigned, a fix 3 ms "in the future" wrapped to an age of
+// 49 days and read as stale -- once a second, on the second the GPS spoke,
+// which flickered GPS SEARCHING over the LORA page's GPS line (2026-10-16).
+bool fresh(uint32_t nowMs) { return s_fix.valid && (int32_t)(nowMs - s_fix.atMs) < (int32_t)(s_phone ? PHONE_FRESH_MS : FRESH_MS); }
 
 void reset() {
     s_fix = Fix();
@@ -222,7 +226,7 @@ void fake(int32_t lat7, int32_t lon7, uint32_t epoch, uint32_t nowMs) {
 bool faked() { return s_faked && s_fix.valid; }
 
 void phone(int32_t lat7, int32_t lon7, uint8_t accM, uint32_t epoch, uint32_t nowMs) {
-    if (s_fix.valid && !s_phone && !s_faked && nowMs - s_fix.atMs < FRESH_MS) return;   // our own GPS wins
+    if (s_fix.valid && !s_phone && !s_faked && (int32_t)(nowMs - s_fix.atMs) < (int32_t)FRESH_MS) return;   // our own GPS wins
     s_phone = true;
     s_faked = false;
     s_fix.valid = true;

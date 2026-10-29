@@ -22,6 +22,8 @@ void           uiWifiPassTick(TFT_eSPI& t, uint32_t now);
 // buffer does not keep the last frame (the 3.5"'s half-height sprite).
 void           uiWifiPassRedrawAll();
 void           uiWifiPassTouch(int x, int y, uint32_t now, WifiPassTouch phase);
+// A character from a physical keyboard: '\b' deletes, '\n' is OK.
+void           uiWifiPassKey(char c, uint32_t now);
 WifiPassResult uiWifiPassResult();
 const char*    uiWifiPassText();
 const char*    uiWifiPassSsid();

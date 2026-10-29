@@ -43,6 +43,18 @@ DetectionType lookupUuid(uint16_t uuid16);
 DetectionType lookupBtName(const char* name);
 // Exactly ten digits and nothing else: a Penguin battery pack's serial.
 bool isBareSerialName(const char* name);
+// "FS-" plus a hex serial: a Flock accessory's BLE name.
+bool isFlockFsName(const char* name);
+// Axon's body-cam tag, "BWCDEVICE", in either byte order, anywhere in a raw
+// advertisement.
+bool isAxonBwcPayload(const uint8_t* payload, uint8_t len);
+// Google Find Hub (FMDN): a service-data structure for 0xFEAA whose frame
+// type is 0x40 or 0x41. Eddystone's own frames (0x00-0x30) are not.
+bool isFmdnPayload(const uint8_t* payload, uint8_t len);
+// The first 16-bit UUID carried as SERVICE DATA (AD 0x16) that is in
+// kUuidTable, or 0. Trackers mostly announce themselves this way rather
+// than in the UUID list.
+uint16_t serviceDataUuid(const uint8_t* payload, uint8_t len);
 DetectionType lookupSsid(const char* ssid);   // case-insensitive prefix
 
 // Friendly vendor label for whichever kSsidPrefixes entry matched
@@ -67,20 +79,6 @@ const char* mfgIdName(uint16_t mfgId);
 // that costs; the short version is that this deliberately trades some
 // precision for actually catching a tag that has just been powered on.
 bool isAirTagPayload(const uint8_t* payload, uint8_t len);
-
-// Tracker tags that identify themselves in SERVICE DATA (AD type 0x16) and
-// not in the advertised list of service UUIDs, run against the whole raw
-// advert. A Google Find My Device tag (Chipolo ONE/CARD Point, Pebblebee,
-// Moto Tag) is 0xFEAA service data with frame type 0x40, or 0x41 while its
-// unwanted-tracking protection is on: a 20-byte rotating ID leaves no room
-// in 31 bytes for a UUID list, so the UUID-list check never sees one. A
-// Samsung SmartTag is 0xFD5A service data the same way.
-//
-// Returns UNKNOWN when neither is present. *fmdn is set when the match was
-// an actual Find My Device frame (as opposed to a plain Eddystone beacon,
-// which uses frame types 0x00-0x30 and is not a tracker); *utp when that
-// frame says unwanted-tracking protection is on.
-DetectionType trackerServiceData(const uint8_t* payload, uint8_t len, bool* fmdn, bool* utp);
 
 // iBeacon check, run against the PARSED manufacturer-data field (company
 // ID included, i.e. what NimBLE's getManufacturerData() returns).

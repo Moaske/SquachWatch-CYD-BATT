@@ -27,10 +27,19 @@
 // of mistake as the backlight pins in main.cpp, and silent in the same way:
 // the light would simply never come on, which reads as "this board has no
 // status LED" rather than as a bug.
-#if defined(ESP32) && !defined(CYD35) && !defined(AWOK) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(NM_CYD_C5)
+#if defined(ESP32) && !defined(CYD35) && !defined(AWOK) && !defined(SQW_S3) && !defined(CROWPANEL7) && !defined(NM_CYD_C5) && !defined(TAB5)
 #define STATUS_LIGHT_HW 1
-#elif defined(FREENOVE_S3) || defined(NM_CYD_C5)
+#elif defined(FREENOVE_S3) || defined(FREENOVE_S3_35) || (defined(NM_CYD_C5) && !defined(MARAUDER_V8))
 #define STATUS_LIGHT_HW 2
+// Not the Marauder V8: Marauder's own build leaves its WS2812 off
+// (HAS_NEOPIXEL_LED commented out) and 27 is a strapping pin on the C5, so it
+// is not driven on a guess.
+#elif defined(MARAUDER_V8)
+// STATUS_LIGHT_HW 3: one single-colour LED, lit high -- the V8's activity LED
+// on GPIO28 (Marauder: ACT_LED_PIN 28, LOW at boot, HIGH while it scans).
+// The colour rules still decide when and how strongly; the LED shows the
+// strongest of the three channels.
+#define STATUS_LIGHT_HW 3
 #else
 #define STATUS_LIGHT_HW 0
 #endif
@@ -47,9 +56,14 @@ static const int     PIN_R = 22, PIN_G = 16, PIN_B = 17;
 static const int     PIN_R = 4, PIN_G = 16, PIN_B = 17;
 #endif
 static const uint8_t CH_R  = 3, CH_G  = 4,  CH_B  = 5;
+#if STATUS_LIGHT_HW == 3
+static const uint8_t PIN_ACT = 28;
+#endif
 #if STATUS_LIGHT_HW == 2
 #if defined(NM_CYD_C5)
 static const uint8_t PIN_WS2812 = 27;
+#elif defined(FREENOVE_S3_35)
+static const uint8_t PIN_WS2812 = 40;   // the 3.5", per Freenove's LED sketch
 #else
 static const uint8_t PIN_WS2812 = 42;
 #endif
@@ -144,6 +158,9 @@ static void write(uint16_t r, uint16_t g, uint16_t b) {
     if (pr == s_pixR && pg == s_pixG && pb == s_pixB) return;
     neopixelWrite(PIN_WS2812, pr, pg, pb);
     s_pixR = pr; s_pixG = pg; s_pixB = pb;
+#elif STATUS_LIGHT_HW == 3
+    const uint16_t v = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    if (v != s_outR) { ledcWrite(PIN_ACT, v); s_outR = v; }
 #elif STATUS_LIGHT_HW
     // Common anode: full duty is off. Only touch the peripheral when a value
     // actually changes, which during a steady alert is never.
@@ -158,6 +175,10 @@ static void write(uint16_t r, uint16_t g, uint16_t b) {
 
 void begin() {
 #if STATUS_LIGHT_HW == 2
+    write(0, 0, 0);
+#elif STATUS_LIGHT_HW == 3
+    ledcAttach(PIN_ACT, 5000, PWM_BITS);
+    s_outR = 0xFFFF;   // force the first write through
     write(0, 0, 0);
 #elif STATUS_LIGHT_HW
     ledcSetup(CH_R, 5000, PWM_BITS); ledcAttachPin(PIN_R, CH_R);

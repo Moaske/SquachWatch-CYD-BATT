@@ -136,7 +136,7 @@ void uiHuntTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adva
     const int sqH = tiny ? bodyBottom - bodyTop - 6 : 44;
     Squachy::tick(t, tiny ? 36 : w / 2, bodyTop, sqH, now, advance, 0.6f, true);
 
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     t.setTextWrap(false);
     t.setTextColor(Theme::CYAN, Theme::BG);
     int labelY = tiny ? bodyTop + 2 : bodyTop + sqH + 2;
@@ -164,8 +164,9 @@ void uiHuntTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adva
         Squachy::huntReaction(Squachy::HuntMoment::STALLED);
     }
 
-    int textBlockH = tiny ? 26 : 36;
-    int gaugeTop = labelY + 12;
+    // Taller on the large panels: a size-3 readout over a body-font trend.
+    int textBlockH = tiny ? 26 : Theme::large() ? 52 : 36;
+    int gaugeTop = labelY + t.fontHeight() + 4;
     int gaugeBottom = bodyBottom - textBlockH;
     int r = gaugeBottom - gaugeTop;
     int maxRw = (colW - 40) / 2;
@@ -214,7 +215,7 @@ void uiHuntTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adva
     char rbuf[16];
     if (rssiN > 0) snprintf(rbuf, sizeof(rbuf), "%d dBm", (int)latestRssi);
     else           snprintf(rbuf, sizeof(rbuf), "-- dBm");
-    t.setTextSize(2);
+    t.setTextFont(1); t.setTextSize(Theme::upSize(2));
     int rw = t.textWidth(rbuf);
     t.setTextColor(Theme::WHITE, Theme::BG);
     const int readY = tiny ? cy + 4 : cy + 8;
@@ -255,11 +256,12 @@ void uiHuntTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adva
         trend = rbuf;
         trendColor = Theme::GREEN;
     }
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     int tw = t.textWidth(trend);
     t.setTextColor(trendColor, Theme::BG);
     t.setCursor(colX + (colW - tw) / 2, readY + readoutH + (tiny ? 1 : 2));
     t.print(trend);
+    Theme::bodyFontOff(t);
 
     int bx, by, bw, bh;
     backButtonRect(w, h, bx, by, bw, bh);

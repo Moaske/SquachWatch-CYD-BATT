@@ -364,12 +364,31 @@ int  bubbleTextH()  { bubbleMeasure(); return s_bubAb + s_bubBb; }
 int  bubbleAscent() { bubbleMeasure(); return s_bubAb; }
 #endif
 
-void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
-    t.setTextSize(1);
-    t.setTextColor(color, BG);
-    t.setCursor(8, LIST_TOP + (LIST_HEADING_H - t.fontHeight()) / 2);
-    t.print(text);
+// On the large panels the size-2 heading sits low in a taller band, clear of
+// the corner icons above it (TITLE_ICON_BAND_H), which a centred one touched.
+int listHeadingH() { return large() ? 20 : 14; }
+
+int listHeadingY(TFT_eSPI& t) {
+    return large() ? TITLE_ICON_BAND_H + (16 - t.fontHeight()) / 2
+                   : LIST_TOP + (listHeadingH() - t.fontHeight()) / 2;
 }
+
+void drawListHeading(TFT_eSPI& t, const char* text, uint16_t color) {
+    t.setTextSize(large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
+    t.setTextColor(color, BG);
+    t.setCursor(8, listHeadingY(t));
+    t.print(text);
+    t.setTextSize(1);
+}
+
+void bodyFontOn(TFT_eSPI& t) {
+    t.setTextFont(large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
+    t.setTextSize(1);
+}
+void bodyFontOff(TFT_eSPI& t) { t.setTextFont(1); }
+int bodyY(int px)              { return large() ? px * 19 / 12 : px; }
+int dialogBtnH(int base)       { return large() ? base + 8 : base; }
+uint8_t upSize(uint8_t base)   { return large() && fontDelta(Settings::FontKind::TEXT) >= 0 ? base + 1 : base; }
 
 void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
     // Four rows of backdrop between tiles, not two, so they read as tiles
@@ -384,6 +403,9 @@ void drawListRowPanel(TFT_eSPI& t, int w, int y, int hgt) {
 static bool s_compact = false;
 void setCompact(bool on) { s_compact = on; }
 bool compact()           { return s_compact; }
+static bool s_large = false;
+void setLarge(bool on)   { s_large = on; }
+bool large()             { return s_large; }
 int  listRowPad()        { return s_compact ? 5 : 10; }
 int pinnedBackH(int panelW) { return s_compact ? 18 : (panelW >= 400 ? 36 : PINNED_BACK_H); }
 
@@ -439,12 +461,246 @@ void drawTitleBar(TFT_eSPI& t, const char* title) {
 }
 
 uint8_t uiTextSize(TFT_eSPI& t, uint8_t base) {
-    return (base == 1 && t.width() >= 400) ? 2 : base;
+    // The large panels in portrait too: 320 wide, but on 3.5" glass.
+    return (base == 1 && (t.width() >= 400 || large())) ? 2 : base;
 }
 
 uint8_t uiMenuTextSize(TFT_eSPI& t) {
     if (t.height() < 200) s_compact = true;
-    return t.width() >= 400 ? 3 : 2;
+    const int s = (t.width() >= 400 ? 3 : 2) + fontDelta(Settings::FontKind::MENUS);
+    return (uint8_t)(s < 1 ? 1 : s > 4 ? 4 : s);
+}
+
+// ---- FONTS ------------------------------------------------------------------
+#ifdef LOAD_FONT4
+static const int PET_FACES_N = 4;   // the pets' ladder, below
+#else
+static const int PET_FACES_N = 3;
+#endif
+// See theme.h. A stored step is -2..+2 around the size each board was built
+// with; every consumer clamps it to the sizes it actually has. A stored face
+// is 0 (as built), 1 PIXEL (the 6x8 system font) or 2 SMOOTH (font 2).
+int8_t fontDelta(Settings::FontKind k) {
+    int s = (int)Settings::fontStep(k) - 2;
+    return (int8_t)(s < -2 ? -2 : s > 2 ? 2 : s);
+}
+void fontRange(TFT_eSPI& t, Settings::FontKind k, int8_t& lo, int8_t& hi) {
+    using Settings::FontKind;
+    switch (k) {
+        case FontKind::MENUS: {
+            // The system font at sizes 1 to 4, around the 2 or 3 rows are.
+            const int base = t.width() >= 400 ? 3 : 2;
+            lo = (int8_t)(1 - base);
+            hi = (int8_t)(s_compact ? 0 : 4 - base);
+            break;
+        }
+        // Down to the 2.8in's sizes on the large panels, and never up: the
+        // screens place their lines for the size they were built with.
+        case FontKind::TEXT:     lo = s_large ? -1 : 0; hi = 0; break;
+        // Labels are measured against their boxes, so up is always safe to
+        // ask for; down only where they were stepped up to begin with.
+        case FontKind::BUTTONS:  lo = s_large ? -1 : 0; hi = 2; break;
+        // His bubble: four rungs (see speechApply()).
+        case FontKind::BUBBLES:  lo = (int8_t)(s_large ? -2 : -1); hi = (int8_t)(s_compact ? 0 : s_large ? 1 : 2); break;
+        // The XP tiles come in two sizes, 1x and 2x; a compact screen draws
+        // its own mini tiles and has neither.
+        case FontKind::XP_TILES: lo = (int8_t)(s_large && !s_compact ? -1 : 0); hi = (int8_t)(s_large || s_compact ? 0 : 1); break;
+        // The pets' balloons: the 6x8 font, font 2, (font 4,) font 2 doubled.
+        case FontKind::PETS:     lo = (int8_t)(s_large ? -1 : 0); hi = (int8_t)(s_compact ? 0 : PET_FACES_N - 1 - (s_large ? 1 : 0)); break;
+        default:                 lo = hi = 0; break;
+    }
+}
+const char* fontStepName(int8_t step) {
+    static const char* const N[5] = { "TINY", "SMALLER", "NORMAL", "BIGGER", "HUGE" };
+    return N[(step < -2 ? -2 : step > 2 ? 2 : step) + 2];
+}
+void setFontDelta(TFT_eSPI& t, Settings::FontKind k, int step) {
+    int8_t lo, hi;
+    fontRange(t, k, lo, hi);
+    if (step < lo) step = lo;
+    if (step > hi) step = hi;
+    Settings::setFontStep(k, (uint8_t)(step + 2));
+}
+bool fontHasFace(Settings::FontKind k) {
+    return k == Settings::FontKind::MENUS || k == Settings::FontKind::BUTTONS ||
+           k == Settings::FontKind::BUBBLES || k == Settings::FontKind::PETS;
+}
+bool fontSmooth(Settings::FontKind k) {
+    const uint8_t f = fontHasFace(k) ? Settings::fontFace(k) : 0;
+    if (f == 1) return false;
+    if (f == 2) return true;
+    // As built: menus in the system font, buttons in font 2 on the large
+    // panels; his bubble and the pets' balloons in font 2 from the rung that
+    // has it (the 6x8 font below that).
+    if (k == Settings::FontKind::BUBBLES) return (s_large ? 2 : 1) + fontDelta(k) >= 1;
+    if (k == Settings::FontKind::PETS)    return (s_large ? 1 : 0) + fontDelta(k) >= 1;
+    return k == Settings::FontKind::BUTTONS && s_large;
+}
+void toggleFontFace(Settings::FontKind k) {
+    if (fontHasFace(k)) Settings::setFontFace(k, fontSmooth(k) ? 1 : 2);
+}
+int xpTileScale() {
+    const int k = (s_large ? 2 : 1) + fontDelta(Settings::FontKind::XP_TILES);
+    return k < 1 ? 1 : k > 2 ? 2 : k;
+}
+
+// How tall a face is: the system font 8 rows a size, font 2 16, font 4 26.
+static int faceH(uint8_t font, uint8_t size) { return (font == 4 ? 26 : font == 2 ? 16 : 8) * size; }
+
+// The face menuFontOn() last set, for menuFontSmaller() to step down from.
+// Asked for as the system font at a size; a menu set to SMOOTH gets the
+// smooth face nearest below it -- font 2 (16 rows), font 4 (26) on the boards
+// that carry it, font 2 doubled (32) -- and one set to PIXEL gets the system
+// font where it would have had font 2.
+static uint8_t s_menuFont = 1, s_menuSize = 1;
+static void menuFace(TFT_eSPI& t, uint8_t font, uint8_t size) {
+    const uint8_t face = Settings::fontFace(Settings::FontKind::MENUS);
+    if (face == 2 && font == 1) {
+#ifdef LOAD_FONT4
+        if (size == 3) { font = 4; size = 1; }
+        else
+#endif
+        { font = 2; size = size >= 4 ? 2 : 1; }
+    }
+    else if (face == 1 && font == 2) { font = 1; size = (uint8_t)(size * 2); }
+    s_menuFont = font; s_menuSize = size;
+    t.setTextFont(font);
+    t.setTextSize(size);
+}
+void menuFontSized(TFT_eSPI& t, int size) { menuFace(t, 1, (uint8_t)(size < 1 ? 1 : size > 4 ? 4 : size)); }
+void menuFontOn(TFT_eSPI& t, bool narrow) {
+    if (!narrow) {
+        menuFontSized(t, uiMenuTextSize(t));
+        return;
+    }
+    // A narrow row's face was the body font -- font 2 on the large panels,
+    // the system font elsewhere -- and that, not TEXT, is what MENUS moves:
+    // down to the system font, up through its sizes 2 and 3.
+    const int8_t s = fontDelta(Settings::FontKind::MENUS);
+    if (s < 0)        menuFace(t, 1, 1);
+    else if (s > 0)   menuFace(t, 1, (uint8_t)(1 + s));
+    else              menuFace(t, s_large ? 2 : 1, 1);
+}
+void subListTextSize(TFT_eSPI& t, bool compact, const char* label, const char* value, int w) {
+    const int base = compact ? 1 : 2;
+    int ts = base + fontDelta(Settings::FontKind::MENUS);
+    if (ts < 1) ts = 1;
+    if (ts > 4) ts = 4;
+    menuFontSized(t, ts);
+    while (ts > base && t.textWidth(label) + (value ? t.textWidth(value) + 8 : 0) > w - 26) menuFontSized(t, --ts);
+}
+bool menuFontSmaller(TFT_eSPI& t) {
+    if (s_menuFont == 4) { s_menuFont = 2; t.setTextFont(2); return true; }
+    if (s_menuSize > 1)  { s_menuSize--; t.setTextSize(s_menuSize); return true; }
+    if (s_menuFont == 2) { s_menuFont = 1; t.setTextFont(1); return true; }
+    return false;
+}
+
+// His bubble, a rung at a time. In font 2 (SMOOTH, as built): the 6x8 font,
+// font 2, font 2 doubled, font 2 tripled -- the 2.8in boards speak on the
+// second rung and the large panels on the third. In PIXEL: the system font
+// at 1, 2, 3, 4. BUBBLES moves the rung. speechFontOn() picks it and the
+// rest answer for the rung it picked, so a caller that steps down with
+// speechFontSmaller() gets measurements that match.
+static int  s_speechLvl = 1, s_speechBase = 1;
+static bool s_speechPixel = false;
+static void speechApply(TFT_eSPI& t) {
+    if (s_speechPixel)    { t.setTextFont(1); t.setTextSize((uint8_t)(s_speechLvl + 1)); return; }
+    if (s_speechLvl == 0) { t.setTextFont(1); t.setTextSize(1); return; }
+    bubbleFontOn(t);
+    t.setTextSize(s_speechLvl);
+}
+void speechFontOn(TFT_eSPI& t, bool small) {
+    s_speechBase  = small ? 1 : (s_large ? 2 : 1);
+    s_speechPixel = !small && Settings::fontFace(Settings::FontKind::BUBBLES) == 1;
+    int lvl = small ? 1 : s_speechBase + fontDelta(Settings::FontKind::BUBBLES);
+    s_speechLvl = lvl < 0 ? 0 : lvl > 3 ? 3 : lvl;
+    speechApply(t);
+}
+bool speechAboveNormal()        { return s_speechLvl > s_speechBase; }
+void speechFontSmaller(TFT_eSPI& t) { if (s_speechLvl > 0) { s_speechLvl--; speechApply(t); } }
+int speechScale()  { return s_speechPixel ? s_speechLvl + 1 : (s_speechLvl == 0 ? 1 : s_speechLvl); }
+int speechTextH()  { return (s_speechPixel || s_speechLvl == 0) ? 8 : bubbleTextH(); }
+int speechAscent() { return (s_speechPixel || s_speechLvl == 0) ? 0 : bubbleAscent(); }
+
+// A button label's faces, smallest first: the system font, font 2 (as tall
+// as size 2, about as narrow as size 1), then the system font at 2, 3, 4.
+// BUTTONS moves a label along this from the face it would have had, and the
+// label takes the biggest face at or below that which its box can hold. Set
+// to PIXEL or SMOOTH, it moves along that face's own sizes instead.
+struct LabelFace { uint8_t font, size; };
+static const LabelFace LABEL_FACES[]  = { {1, 1}, {2, 1}, {1, 2}, {1, 3}, {1, 4} };
+static const LabelFace PIXEL_FACES[]  = { {1, 1}, {1, 2}, {1, 3}, {1, 4} };
+#ifdef LOAD_FONT4
+static const LabelFace SMOOTH_FACES[] = { {2, 1}, {4, 1}, {2, 2}, {2, 3} };
+#else
+static const LabelFace SMOOTH_FACES[] = { {2, 1}, {2, 2}, {2, 3} };
+#endif
+static const int SMOOTH_N = sizeof(SMOOTH_FACES) / sizeof(SMOOTH_FACES[0]);
+// The pets' balloons, smallest first. As built: the 6x8 font on the small
+// panels, font 2 (bold) on the large ones; PETS moves along this, and a
+// PIXEL or SMOOTH pick along that face's own sizes.
+#ifdef LOAD_FONT4
+static const LabelFace PET_FACES[] = { {1, 1}, {2, 1}, {4, 1}, {2, 2} };
+#else
+static const LabelFace PET_FACES[] = { {1, 1}, {2, 1}, {2, 2} };
+#endif
+static const LabelFace PET_PIXEL[] = { {1, 1}, {1, 2}, {1, 3} };
+static uint8_t s_petFont = 1, s_petSize = 1;
+static void petFace(TFT_eSPI& t, uint8_t font, uint8_t size) {
+    s_petFont = font; s_petSize = size;
+    t.setTextFont(font);
+    t.setTextSize(size);
+}
+void petFontOn(TFT_eSPI& t) {
+    const uint8_t face = Settings::fontFace(Settings::FontKind::PETS);
+    const LabelFace* L = face == 1 ? PET_PIXEL : face == 2 ? PET_FACES + 1 : PET_FACES;
+    const int n = face == 1 ? 3 : face == 2 ? PET_FACES_N - 1 : PET_FACES_N;
+    // The rung the board was built with, on this ladder.
+    const int native = face == 2 ? 0 : (s_large ? 1 : 0);
+    int lvl = native + fontDelta(Settings::FontKind::PETS);
+    if (lvl < 0) lvl = 0;
+    if (lvl >= n) lvl = n - 1;
+    petFace(t, L[lvl].font, L[lvl].size);
+}
+bool petFontSmaller(TFT_eSPI& t) {
+    if (s_petFont == 4) { petFace(t, 2, 1); return true; }
+    if (s_petSize > 1)  { petFace(t, s_petFont, s_petSize - 1); return true; }
+    if (s_petFont == 2) { petFace(t, 1, 1); return true; }
+    return false;
+}
+
+// Moves from (font, size) by the BUTTONS step to the biggest face that fits
+// maxW x maxH, and leaves it set. Nothing smaller than the ladder's first.
+static void labelFaceStep(TFT_eSPI& t, const char* label, uint8_t& font, uint8_t& size, int maxW, int maxH) {
+    const int8_t step = fontDelta(Settings::FontKind::BUTTONS);
+    const uint8_t face = Settings::fontFace(Settings::FontKind::BUTTONS);
+    if (step == 0 && face == 0) return;
+    const LabelFace* L = face == 1 ? PIXEL_FACES : face == 2 ? SMOOTH_FACES : LABEL_FACES;
+    const int n = face == 1 ? 4 : face == 2 ? SMOOTH_N : 5;
+    // Where the face it would have had sits on this ladder: the tallest
+    // rung no taller than it (the first, if all are).
+    const int h0 = faceH(font, size);
+    int at = 0;
+    for (int i = 0; i < n; i++) {
+        const int hi = faceH(L[i].font, L[i].size);
+        if (hi < h0 || (hi == h0 && (face != 0 || (L[i].font == font && L[i].size == size)))) at = i;
+    }
+    int target = at + step;
+    if (target < 0) target = 0;
+    if (target >= n) target = n - 1;
+    // The biggest that fits; when not even the ladder's first does (a box
+    // sized for the 6x8 font, set to SMOOTH), the face it would have had.
+    for (int i = target; i >= 0; i--) {
+        t.setTextFont(L[i].font);
+        t.setTextSize(L[i].size);
+        if (t.textWidth(label) <= maxW && t.fontHeight() <= maxH) {
+            font = L[i].font; size = L[i].size;
+            break;
+        }
+    }
+    t.setTextFont(font);
+    t.setTextSize(size);
 }
 
 void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
@@ -463,18 +719,32 @@ void drawButton(TFT_eSPI& t, int x, int y, int w, int h,
     uint8_t ts = uiTextSize(t, textSize);
     if (ts != textSize) {
         t.setTextSize(ts);
-        if (t.textWidth(label) > w - 6) ts = textSize;
+        if (t.textWidth(label) > w - 6 || t.fontHeight() > h - 2) ts = textSize;
     }
+    // A large panel's label that cannot take size 2 gets font 2 rather than
+    // the 8-row system font: about as wide, half again as tall.
+    bool body = false;
+    if (ts == 1 && textSize == 1 && large() && h >= 20) {
+        t.setTextFont(2);
+        t.setTextSize(1);
+        body = t.textWidth(label) <= w - 6;
+        if (!body) t.setTextFont(1);
+    }
+    // FONTS > BUTTONS moves that along the label faces, measured against
+    // the box like the step-up above.
+    uint8_t font = body ? 2 : 1;
     t.setTextSize(ts);
+    labelFaceStep(t, label, font, ts, w - 6, h - 2);
     t.setTextColor(fg, fill);
     int tw = t.textWidth(label);
     int th = t.fontHeight();
     t.setCursor(x + (w - tw) / 2, y + (h - th) / 2);
     t.print(label);
+    if (font != 1) t.setTextFont(1);
 }
 
 void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
-                     const char* label, bool sunken) {
+                     const char* label, bool sunken, bool bold) {
     // Face first, inset by the two bevel rings so the edges below draw over
     // nothing they need to keep.
     t.fillRect(x + 2, y + 2, w - 4, h - 4, W95_FACE);
@@ -505,15 +775,64 @@ void drawWin95Button(TFT_eSPI& t, int x, int y, int w, int h,
     // the tell that it is a costume. Centred on the FACE rather than on the
     // whole rect, so the bevel does not pull the text off-centre, then the
     // one-pixel press offset on top.
+    // On the large panels the label is font 2, which is also nearer the
+    // proportional face Win95 itself used -- where the button is tall and
+    // wide enough for it; a squeezed one keeps the system font.
+    const uint8_t callerFont = t.textfont;
     t.setTextSize(1);
     t.setTextWrap(false);
     t.setTextColor(BLACK, W95_FACE);
-    const int tw = t.textWidth(label);
+    const bool swapped = large() && h >= 20;
+    uint8_t font = 1, size = 1;
+    if (swapped) {
+        t.setTextFont(2);
+        if (t.textWidth(label) > w - 8) t.setTextFont(1);
+        else font = 2;
+    }
+    // FONTS > BUTTONS moves the face, measured against the button's face.
+    labelFaceStep(t, label, font, size, w - 8, h - 4);
+    const int tw = t.textWidth(label) + (bold ? 1 : 0);
     const int th = t.fontHeight();
     const int ox = sunken ? 1 : 0;
-    t.setCursor(x + 2 + (w - 4 - tw) / 2 + ox,
-                y + 2 + (h - 4 - th) / 2 + ox);
+    const int lx = x + 2 + (w - 4 - tw) / 2 + ox, ly = y + 2 + (h - 4 - th) / 2 + ox;
+    // Bold is the same label twice, a pixel apart. Drawn with no background
+    // (the face is already filled) so the second pass does not wipe the
+    // first one's left edge.
+    if (bold) t.setTextColor(BLACK);
+    t.setCursor(lx, ly);
     t.print(label);
+    if (bold) { t.setCursor(lx + 1, ly); t.print(label); }
+    if (swapped || font != 1 || size != 1) { t.setTextSize(1); t.setTextFont(callerFont); }   // only ever touched here
+}
+
+int drawWin95Window(TFT_eSPI& t, int x, int y, int w, int h, const char* title) {
+    const uint16_t NAVY = 0x0010;          // System Properties' title bar
+    const int TB = 22;
+    t.fillRect(x + 2, y + 2, w - 4, h - 4, W95_FACE);
+    t.drawFastHLine(x, y, w, W95_HILITE);
+    t.drawFastVLine(x, y, h, W95_HILITE);
+    t.drawFastHLine(x, y + h - 1, w, W95_DKSHADOW);
+    t.drawFastVLine(x + w - 1, y, h, W95_DKSHADOW);
+    t.drawFastHLine(x + 1, y + 1, w - 2, W95_LIGHT);
+    t.drawFastVLine(x + 1, y + 1, h - 2, W95_LIGHT);
+    t.drawFastHLine(x + 1, y + h - 2, w - 2, W95_SHADOW);
+    t.drawFastVLine(x + w - 2, y + 1, h - 2, W95_SHADOW);
+    t.fillRect(x + 3, y + 3, w - 6, TB, NAVY);
+    const uint8_t callerFont = t.textfont;
+    t.setTextFont(2);
+    t.setTextSize(1);
+    t.setTextWrap(false);
+    t.setTextColor(WHITE, NAVY);
+    t.setCursor(x + 8, y + 3 + (TB - 16) / 2);
+    t.print(title);
+    t.setTextFont(callerFont);
+    const int cx = x + w - 6 - 18, cy = y + 6;
+    drawWin95Button(t, cx, cy, 18, TB - 6, "", false);
+    t.drawLine(cx + 5, cy + 4, cx + 11, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 11, cy + 4, cx + 5, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 6, cy + 4, cx + 12, cy + 10, W95_DKSHADOW);
+    t.drawLine(cx + 12, cy + 4, cx + 6, cy + 10, W95_DKSHADOW);
+    return y + 3 + TB + 6;
 }
 
 ButtonBarGeom computeButtonBar(int screenW, int screenH) {
@@ -832,7 +1151,36 @@ void drawPulsingBorder(TFT_eSPI& t, uint32_t now, uint16_t a, uint16_t b,
 // A pointer-to-array rather than a flat block so every charBuf[i][j] below
 // still reads as a grid. The two numbers that give it its shape live out
 // here with it rather than inside the function that draws.
-static const int MAX_COLS = 96;
+// The widest band a background is ever asked to fill on this build, in the
+// app's own (logical) pixels. The fixed-size buffers below are sized from it,
+// so a board with a small screen does not carry a big one's arrays. Every
+// board draws at 320 or less across, except the 3.5" (480) and the Tab5
+// (640x360 doubled up to its 1280x720 panel). The Tab5 is also the one with
+// RAM to spare, so it gets a little more of everything: SQW_BG_DENSITY is
+// how many times the usual number of toasters, stars and so on a background
+// spreads across the extra room. The emulator can be built with either set
+// by hand (EXTRA_CXXFLAGS) to render a Tab5-sized band the way the board does.
+#ifndef SQW_BG_MAX_W
+#if defined(TAB5)
+#define SQW_BG_MAX_W 640
+#elif defined(CYD35)
+#define SQW_BG_MAX_W 480
+#else
+#define SQW_BG_MAX_W 320
+#endif
+#endif
+#ifndef SQW_BG_DENSITY
+#if defined(TAB5)
+#define SQW_BG_DENSITY 2
+#else
+#define SQW_BG_DENSITY 1
+#endif
+#endif
+
+// One column every 5 px (drawDigitalRain's SPACING). 96 was set for the
+// 3.5"'s 480 and stays the floor so no board's rain changes; the Tab5's 640
+// needs 128, or the right half of its screen has no rain at all.
+static const int MAX_COLS = (SQW_BG_MAX_W / 5 > 96) ? SQW_BG_MAX_W / 5 : 96;
 static const int MAXTRAIL = 24;
 static uint8_t (*s_rainBuf)[MAXTRAIL] = nullptr;
 static bool      s_rainInited = false;
@@ -2318,10 +2666,10 @@ static void publishFlockToaster(uint8_t i, int cx, int cy, int hw, int hh, uint3
 static int8_t s_flockTaken = -1;     // a toaster tapped three times, to be dropped from the flock
 
 void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
-    static const uint8_t N = 5;
+    static const uint8_t N = 5 * SQW_BG_DENSITY;     // more of everything where the band is bigger
     static float    tx[N], ty[N], tscale[N];
     static uint16_t tcol[N];
-    static const uint8_t NT = 6;
+    static const uint8_t NT = 6 * SQW_BG_DENSITY;
     static float    ox[NT], oy[NT], oscale[NT];
     static bool      oface[NT], oburnt[NT];
     static bool      inited = false;
@@ -2330,7 +2678,7 @@ void drawFlyingToasters(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // black; this is a deliberate addition, so it stays quiet -- the
     // toasters are the subject and none of this is allowed to compete
     // with them for attention.
-    static const uint8_t NSTAR = 44;
+    static const uint8_t NSTAR = 44 * SQW_BG_DENSITY;
     static float   starX[NSTAR], starY[NSTAR];
     static uint8_t starMag[NSTAR], starPh[NSTAR];
 
@@ -2792,7 +3140,7 @@ static uint16_t ditherRGBi(TFT_eSPI& t, int r, int g, int b, uint8_t cell) {
 // those was a few hundred instructions of software arithmetic, and the
 // tank drew at eight frames a second (bg 77 ms, 2026-10-02). The Xtensa
 // boards have the unit and never noticed; this costs them nothing either.
-static int isin256(uint16_t a) {
+int isin256(uint16_t a) {   // in theme.h too: the pets use it
     static const uint16_t Q[65] = {
           0,   6,  13,  19,  25,  31,  38,  44,  50,  56,  62,  68,  74,  80,  86,  92,
          98, 104, 109, 115, 121, 126, 132, 137, 142, 147, 152, 157, 162, 167, 172, 177,
@@ -3820,7 +4168,12 @@ static void drawXyzzy(TFT_eSPI& t, uint32_t now, int yStart, int bandH) {
 // Two independently-scrolling columns (different add intervals so they
 // never sync up) side by side, so the log fills the full screen width
 // instead of a narrow strip down the left.
-struct TermCol { char lines[20][40]; bool special[20]; uint8_t count; uint32_t lastAdd; };
+// Lines kept per column, and columns across. Two columns of twenty lines fill
+// a 320 or 480 band; the Tab5's 640x360 had a third of its width and half its
+// height empty, so a band 600 or wider gets three columns of up to forty.
+static const uint8_t TERM_LINES = (SQW_BG_MAX_W >= 600) ? 40 : 20;
+static const uint8_t TERM_COLS  = (SQW_BG_MAX_W >= 600) ? 3 : 2;
+struct TermCol { char lines[TERM_LINES][40]; bool special[TERM_LINES]; uint8_t count; uint32_t lastAdd; };
 
 static void termGenLine(char* out, size_t outSize) {
     static const char* VERBS[] = { "INIT", "PROBE", "SCAN", "MOUNT", "AUTH", "PARSE", "TRACE", "PING", "SYNC", "LOAD" };
@@ -3853,8 +4206,8 @@ static const uint8_t TERM_EGG_COUNT = sizeof(TERM_EGG_LINES) / sizeof(TERM_EGG_L
 static void termAdvance(TermCol& c, uint32_t now, uint32_t interval) {
     if (now - c.lastAdd <= interval) return;
     c.lastAdd = now;
-    if (c.count < 20) c.count++;
-    for (uint8_t i = 19; i > 0; i--) {
+    if (c.count < TERM_LINES) c.count++;
+    for (uint8_t i = TERM_LINES - 1; i > 0; i--) {
         memcpy(c.lines[i], c.lines[i - 1], sizeof(c.lines[i]));
         c.special[i] = c.special[i - 1];
     }
@@ -3892,7 +4245,7 @@ void drawTerminalLog(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     if (!s_termCols) {
         // calloc, not malloc: a TermCol is only correct starting empty, and
         // a static one used to get that for free.
-        s_termCols = (TermCol*)calloc(2, sizeof(TermCol));
+        s_termCols = (TermCol*)calloc(TERM_COLS, sizeof(TermCol));
         if (!s_termCols) { t.fillRect(0, yStart, t.width(), yEnd - yStart, BG); return; }
     }
     TermCol* const cols = s_termCols;
@@ -3900,17 +4253,21 @@ void drawTerminalLog(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     int bandH = yEnd - yStart;
     if (bandH < 20) return;
     int visLines = bandH / 9;
-    if (visLines > 20) visLines = 20;
+    if (visLines > TERM_LINES) visLines = TERM_LINES;
+    // Three only where they fit: a line is about 130 px, so 600 across.
+    const uint8_t nCols = (TERM_COLS > 2 && w >= 600) ? 3 : 2;
 
     termAdvance(cols[0], now, 180);
     termAdvance(cols[1], now, 230);   // offset cadence so the two columns don't lock-step
+    if (nCols > 2) termAdvance(cols[2], now, 205);
 
     t.fillRect(0, yStart, w, bandH, BG);
     t.setTextSize(1);
     t.setTextWrap(false);
-    termRender(t, cols[0], 4, yStart, visLines);
-    termRender(t, cols[1], w / 2 + 4, yStart, visLines);
-    t.drawFastVLine(w / 2, yStart, bandH, blend(BG, GREEN, 60));
+    for (uint8_t k = 0; k < nCols; k++) {
+        termRender(t, cols[k], k * w / nCols + 4, yStart, visLines);
+        if (k) t.drawFastVLine(k * w / nCols, yStart, bandH, blend(BG, GREEN, 60));
+    }
 
     // Rare dramatic beat: a full-width banner line flashes across both
     // columns for under a second, breaking the indifferent scroll with
@@ -4477,12 +4834,13 @@ void drawToast(TFT_eSPI& t, uint32_t now) {
     t.setTextSize(2);
     int bw = t.textWidth(s_toastHead) + 30;
     if (s_toastSub[0]) {
-        t.setTextSize(1);
+        bodyFontOn(t);
         const int sw = t.textWidth(s_toastSub) + 30;
         if (sw > bw) bw = sw;
+        bodyFontOff(t);
     }
     if (bw > w - 20) bw = w - 20;
-    const int bh = s_toastSub[0] ? 48 : 34;
+    const int bh = s_toastSub[0] ? (s_large ? 56 : 48) : 34;
     const int bx = (w - bw) / 2, by = (h - bh) / 2;
 
     t.fillRect(bx, by, bw, bh, BG);
@@ -4494,10 +4852,11 @@ void drawToast(TFT_eSPI& t, uint32_t now) {
     t.setCursor(bx + (bw - t.textWidth(s_toastHead)) / 2, by + 8);
     t.print(s_toastHead);
     if (s_toastSub[0]) {
-        t.setTextSize(1);
+        bodyFontOn(t);
         t.setTextColor(WHITE, BG);
         t.setCursor(bx + (bw - t.textWidth(s_toastSub)) / 2, by + 31);
         t.print(s_toastSub);
+        bodyFontOff(t);
     }
 }
 
@@ -4742,6 +5101,17 @@ static uint32_t s_lodgeAt = 0;
 static uint8_t  s_lodgeKnocks = 0;
 static uint32_t s_lodgeKnockAt = 0;
 static bool     s_lodgePending = false;
+// The igloo that turns up in the SNOWFALL snow: three knocks and MEATY rolls
+// out of it. The lodge's box-and-freshness rule; the two eyes in its door are
+// the tell, and each knock opens them wider. Meant to be EASY (asked for
+// 2026-10-13): it comes by about every half minute, the target is generous,
+// and the knocks can be slow.
+static const uint8_t  IGLOO_KNOCKS_NEEDED = 3;
+static const uint32_t IGLOO_KNOCK_WINDOW  = 6000;
+static int      s_iglooHitX = -1, s_iglooHitY = 0;
+static uint32_t s_iglooAt = 0, s_iglooKnockAt = 0;
+static uint8_t  s_iglooKnocks = 0;
+static bool     s_iglooPending = false;
 // The FIRE owl while he asks WHAT REEKS?!: where he and his bubble were the
 // last frame he asked it, and when. backgroundTap() only believes a frame
 // from the last quarter second, the same freshness rule as the eye.
@@ -4796,6 +5166,12 @@ bool consumeOwlReek() {
 bool consumeLodgeKnock() {
     if (!s_lodgePending) return false;
     s_lodgePending = false;
+    return true;
+}
+
+bool consumeIglooKnock() {
+    if (!s_iglooPending) return false;
+    s_iglooPending = false;
     return true;
 }
 
@@ -4897,6 +5273,21 @@ bool backgroundTap(int x, int y, uint32_t now) {
         }
     }
 
+    // Three knocks on the igloo in the snow. A box again: it is a building
+    // too, and a small one, so a few pixels of slack round it.
+    if (s_iglooAt && (now - s_iglooAt) <= 250 && !Squachy::meatyUnlocked()) {
+        const int idx = x - s_iglooHitX, idy = y - s_iglooHitY;
+        if (idx >= -24 && idx <= 24 && idy >= -30 && idy <= 8) {
+            if ((now - s_iglooKnockAt) > IGLOO_KNOCK_WINDOW) s_iglooKnocks = 0;
+            s_iglooKnockAt = now;
+            if (++s_iglooKnocks >= IGLOO_KNOCKS_NEEDED) {
+                s_iglooKnocks = 0;
+                s_iglooPending = true;
+            }
+            return true;
+        }
+    }
+
     // The Aquarium shark. The FIRST touch never catches him -- it turns him
     // round -- and the second one, on the pass he makes coming back, does.
     if (s_sharkX >= 0 && (now - s_sharkAt) <= 250) {
@@ -4976,11 +5367,12 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // bytes) allocated and never once written or read, since fw simply
     // never reaches them there. MAXFH stays 80 for both: the tallest
     // band any board renders is 320px, which is the same 80 cells.
-#if defined(CYD35)
-    static const int MAXFW = 120, MAXFH = 80;
-#else
-    static const int MAXFW = 80, MAXFH = 80;
-#endif
+    // SQW_BG_MAX_W gives 80 cells on those boards and 120 on cyd35, as
+    // before, and 160 on the Tab5, whose 640px band was half empty at 80.
+    // Its height is the same 160 so the grid also covers the band when the
+    // Tab5 turns portrait (640 tall).
+    static const int MAXFW = SQW_BG_MAX_W / CW;
+    static const int MAXFH = (SQW_BG_MAX_W > 480) ? SQW_BG_MAX_W / CW : 80;
     if (!s_fireHeat) {
         s_fireHeat = (uint8_t*)malloc(MAXFW * MAXFH);
         if (!s_fireHeat) { t.fillRect(0, yStart, t.width(), yEnd - yStart, BG); return; }
@@ -4994,7 +5386,7 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // the old version look like one repeating pattern sliding sideways
     // instead of separate flames. Each source also jitters its own
     // base position a little so the flames don't sit glued in place.
-    static const uint8_t NSRC = 7;
+    static const uint8_t NSRC = 7 * SQW_BG_DENSITY;   // the same flame width on a wider band
     static float srcX[NSRC], srcPhase[NSRC], srcFreq[NSRC], srcJitterPh[NSRC];
     static bool  srcInited = false;
 
@@ -5759,7 +6151,13 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
                 ? SCARED[((now - s_wolfAt) / 1400) % (sizeof(SCARED) / sizeof(SCARED[0]))]
                 : reek ? "WHAT REEKS?!"
                 : QUIPS[(slot * 5 + 2) % NQUIP];
-            t.setTextSize(1);
+            // The pets' face, so FONTS > PETS sizes him with them and the
+            // large panels get their bigger balloon: the 6x8 font at size 1
+            // on the small boards, exactly as before. A line too wide for
+            // the band steps down, as a pet's does.
+            const uint8_t callerFont = t.textfont;
+            petFontOn(t);
+            while (t.textWidth(q) + 8 > w - 4 && petFontSmaller(t)) {}
             const int bw = t.textWidth(q) + 8;
             // Derived, not the hard-coded 11 this used to be. Squachy's
             // bubbles and the pet's both size themselves off fontHeight();
@@ -5778,11 +6176,12 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             // clears the top of his head, and only then falls back to
             // clamping against the screen edge.
             const int squachyLeft = (int)(w * 0.34f);
+            // Heights from the balloon's own: 14 and 26 at the 6x8 font.
             int bx = owlX + 10;
-            int by = owlY - 14;
+            int by = owlY - 1 - bh;
             if (bx + bw > squachyLeft) {
                 bx = owlX - bw / 2 + 4;      // centred over the owl
-                by = owlY - 26;
+                by = owlY - 2 * bh;
             }
             if (bx + bw > w - 2)    bx = w - 2 - bw;
             if (bx < 1)             bx = 1;
@@ -5805,6 +6204,8 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             t.setTextColor(ink, paper);
             t.setCursor(bx + 4, by + 3);
             t.print(q);
+            t.setTextFont(callerFont);
+            t.setTextSize(1);
             if (reek) {
                 // Where he is and where his bubble is, for the tap.
                 s_owlX = owlX; s_owlY = owlY;
@@ -5844,7 +6245,7 @@ void drawFire(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
     // at a randomly chosen flame source rather than anywhere across
     // the width, which is what the old version did: an ember could pop
     // out of bare ground where there was no flame at all.
-    static const uint8_t NE = 8;
+    static const uint8_t NE = 8 * SQW_BG_DENSITY;
     static float    ex[NE], ey[NE], evy[NE];
     static bool     emberInited = false;
     if (!emberInited) {
@@ -5922,6 +6323,7 @@ static SnowObj   s_prop[PROP_N];                  // kind in .b: 0 rock 1 stump 
 // where every tree whitens on the same frame reads as a palette swap.
 static float     s_lodgeX = 0.0f;                 // the lodge, on the far plane
 static float     s_nearX = 0.0f;                  // one foreground tree
+static float     s_iglooX = 0.0f;                 // the igloo, now and then on the slope
 static uint8_t   s_bankD[SNOW_COLS];
 static uint8_t   s_trackD[SNOW_COLS];             // carved tracks, fill back in
 static bool      s_snowInit = false;
@@ -6026,8 +6428,13 @@ static uint32_t    s_saySkiTil = 0, s_sayYetTil = 0, s_sayNextAt = 0;
 // and ink the werewolf uses on FIRE, at half the size.
 static void snowSay(TFT_eSPI& t, int x, int topY, const char* txt) {
     if (!txt) return;
-    t.setTextSize(1);
-    const int bw = t.textWidth(txt) + 6, bh = 11;
+    // The pets' face, as the fire owl's: unchanged on the small boards
+    // (11 high at the 6x8 font), bigger on the large ones, and FONTS > PETS
+    // moves it.
+    const uint8_t callerFont = t.textfont;
+    petFontOn(t);
+    while (t.textWidth(txt) + 6 > t.width() - 2 && petFontSmaller(t)) {}
+    const int bw = t.textWidth(txt) + 6, bh = t.fontHeight() + 3;
     int bx = x - bw / 2;
     if (bx < 1) bx = 1;
     if (bx + bw > t.width() - 1) bx = t.width() - 1 - bw;
@@ -6043,6 +6450,8 @@ static void snowSay(TFT_eSPI& t, int x, int topY, const char* txt) {
     t.setTextColor(ink, paper);
     t.setCursor(bx + 3, by + 2);
     t.print(txt);
+    t.setTextFont(callerFont);
+    t.setTextSize(1);
 }
 
 // THE EAT. The payoff, and it runs about one chase in six, so it has to
@@ -6225,6 +6634,45 @@ static void snowAurora(TFT_eSPI& t, int w, int yStart, int bandH,
                                        (uint16_t)((y - yStart) * 255 / (bandH > 0 ? bandH : 1)));
             t.drawFastHLine(x0, y, x1 - x0, blend(sky, hue, (uint16_t)a));
         }
+    }
+}
+
+// The igloo on the slope, 24 wide and 13 tall, its base on the snow at
+// (x, gy). Snow blocks, a dark door, and -- until MEATY is earned -- two
+// eyes in the door that blink and open wider with each knock.
+static void snowIgloo(TFT_eSPI& t, int x, int gy, uint32_t now, uint16_t lit, uint16_t dim) {
+    const int R = 12, Hh = 13;
+    const uint16_t edge = blend(dim, (uint16_t)0x4A69, 110);
+    for (int i = 0; i < Hh; i++) {
+        const int d = Hh - i;
+        int hw = 0;
+        while ((hw + 1) * (hw + 1) * Hh * Hh <= R * R * (Hh * Hh - d * d + d)) hw++;
+        t.drawFastHLine(x - hw - 1, gy - Hh + i, 2 * hw + 2, edge);
+        if (hw > 0) t.drawFastHLine(x - hw, gy - Hh + i, 2 * hw, lit);
+    }
+    t.drawFastHLine(x - 3, gy - Hh - 1, 6, edge);
+    // block lines
+    for (int y = gy - 4, row = 0; y > gy - Hh + 2; y -= 4, row++) {
+        const int d = gy - y;
+        int hw = 0;
+        while ((hw + 1) * (hw + 1) * Hh * Hh <= R * R * (Hh * Hh - d * d)) hw++;
+        if (hw > 2) t.drawFastHLine(x - hw + 1, y, 2 * hw - 2, dim);
+        for (int bx = x - hw + 3 + (row & 1) * 3; bx < x + hw - 1; bx += 6) t.drawFastVLine(bx, y - 3, 3, dim);
+    }
+    // the door, a little left of centre
+    const int dx = x - 3;
+    t.fillRect(dx - 4, gy - 6, 9, 6, (uint16_t)0x18A2);
+    t.drawFastHLine(dx - 3, gy - 7, 7, (uint16_t)0x18A2); t.drawFastHLine(dx - 2, gy - 8, 5, (uint16_t)0x18A2);
+    if (Squachy::meatyUnlocked()) return;              // he lives with you now
+    // two eyes in the dark, blinking; wider with every knock
+    const bool blink = (now % 3700u) < 160;
+    const int open = s_iglooKnocks;                      // 0, 1 or 2
+    for (int e = 0; e < 2; e++) {
+        const int ex = dx - 3 + e * 4, ey = gy - 5 - (open ? 1 : 0);
+        if (blink && !open) { t.drawFastHLine(ex, ey + 1, 3, (uint16_t)0xFFFF); continue; }
+        // half shut until knocked; wide open, pupils up, after one
+        t.fillRect(ex, ey, 3, open ? 3 : 2, (uint16_t)0xFFFF);
+        t.drawPixel(ex + 1, ey + (open ? 0 : 1), (uint16_t)0x0000);
     }
 }
 
@@ -6657,7 +7105,8 @@ static void snowSpray(TFT_eSPI& t, int x, int gy, int8_t carve, float power, uin
 // the arm branch used to key entirely off the pose, so there was no way
 // to have one without the other.
 static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bulge = 0,
-                     bool holding = false, int holdDX = 0, int holdDY = 0) {
+                     bool holding = false, int holdDX = 0, int holdDY = 0,
+                     const YetiRig* rig = nullptr) {
     // Mid grey, not off-white. At (201,206,214) he quantised to
     // (219,219,255) -- within one palette step of the snow he stands on,
     // so his whole body vanished and he read as a floating head. The
@@ -6682,10 +7131,16 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
         t.fillRect(x + 18, y - 6, 6, 3, tooth);
         return;
     }
-    const int bob = (int)(sinf((float)now / (pose == YPose::WINDED ? 260.0f : 90.0f))
-                          * (pose == YPose::WINDED ? 2.5f : 1.5f));
-    const int B = y - bob;
-    const int lean = (pose == YPose::WINDED) ? 4 : ((pose == YPose::RECOIL) ? -6 : 0);
+    // A rig (the pet's dances) brings its own everything: no bob, its own
+    // lean and hips, a hop, and a crouch that lowers the body while the
+    // feet stay planted -- B is the body line, Bf the feet.
+    const int bob = rig ? 0 : (int)(sinf((float)now / (pose == YPose::WINDED ? 260.0f : 90.0f))
+                                    * (pose == YPose::WINDED ? 2.5f : 1.5f));
+    const int cr = rig ? rig->crouch : 0;
+    const int Bf = y - bob - (rig ? rig->hop : 0);
+    const int B = Bf + cr;
+    if (rig) bulge = rig->bulge;
+    const int lean = rig ? rig->lean : ((pose == YPose::WINDED) ? 4 : ((pose == YPose::RECOIL) ? -6 : 0));
     // The legs were detached, twice over. The body's six rows start at
     // B-38 and are 22 tall, so the belly ends at B-16 -- and the legs
     // started at B-13, leaving three pixels of night between his hips
@@ -6695,26 +7150,29 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
     // Legs now start at B-17, one pixel INTO the bottom body row so
     // there is no seam at any bob offset, and they carry half the lean:
     // his hips move with him, just less than his shoulders do.
-    const int hip = lean / 2;
+    const int hip = rig ? rig->hip : lean / 2;
     // A gait, in opposition. Free -- it moves rectangles that were being
     // drawn anyway -- and a running character with rigid legs was the
     // other half of why he read as a cardboard cutout.
-    const int gait = (pose == YPose::RUN) ? (int)(sinf((float)now / 90.0f) * 4.0f) : 0;
-    t.fillRect(x - 8 + hip, B - 17, 4, 15, limb);
-    t.fillRect(x + 4 + hip, B - 17, 4, 15, limb);
+    const int gait = (!rig && pose == YPose::RUN) ? (int)(sinf((float)now / 90.0f) * 4.0f) : 0;
+    t.fillRect(x - 8 + hip, B - 17, 4, 15 - cr, limb);
+    t.fillRect(x + 4 + hip, B - 17, 4, 15 - cr, limb);
     // Feet swing fore and aft, and the trailing one lifts off the snow.
-    t.fillRect(x - 12 + hip + gait, B - 3 - ((gait > 2) ? 1 : 0), 8, 3, limb);
-    t.fillRect(x +  4 + hip - gait, B - 3 - ((gait < -2) ? 1 : 0), 8, 3, limb);
-    static const int8_t  gw[6] = { 8, 10, 11, 11, 10, 8 };
-    static const uint8_t gh[6] = { 3, 3, 4, 5, 4, 3 };
-    int yy = B - 38;
-    for (int i = 0; i < 6; i++) {
-        const int extra = (bulge && i >= 1 && i <= 4) ? bulge : 0;
-        t.fillRect(x - gw[i] - extra + lean, yy, (gw[i] + extra) * 2, gh[i], fur);
-        yy += gh[i];
-    }
-    t.fillRect(x - 11 + lean, B - 33, 3, 14, furS);
-    t.fillRect(x + 6 + lean,  B - 35, 4, 12, furHi);
+    t.fillRect(x - 12 + hip + gait, Bf - 3 - ((gait > 2) ? 1 : 0) - (rig ? rig->lLift : 0), 8, 3, limb);
+    t.fillRect(x +  4 + hip - gait, Bf - 3 - ((gait < -2) ? 1 : 0) - (rig ? rig->rLift : 0), 8, 3, limb);
+    // The torso, drawn once the arm that goes behind him (a rig's) is down.
+    auto drawBody = [&]() {
+        static const int8_t  gw[6] = { 8, 10, 11, 11, 10, 8 };
+        static const uint8_t gh[6] = { 3, 3, 4, 5, 4, 3 };
+        int yy = B - 38;
+        for (int i = 0; i < 6; i++) {
+            const int extra = (bulge && i >= 1 && i <= 4) ? bulge : 0;
+            t.fillRect(x - gw[i] - extra + lean, yy, (gw[i] + extra) * 2, gh[i], fur);
+            yy += gh[i];
+        }
+        t.fillRect(x - 11 + lean, B - 33, 3, 14, furS);
+        t.fillRect(x + 6 + lean,  B - 35, 4, 12, furHi);
+    };
     // ---- arms: shoulder, elbow, hand ---------------------------------
     // What was here before was two dark bars floating beside him. The arm
     // rect ran y B-40..B-28 at x-20..x-16, while the torso's widest row
@@ -6730,9 +7188,13 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
     // instead of being bolted to the side of it. Only the forearm goes
     // dark. The colour change does as much work here as the geometry.
     const int jy = B - 34;
-    for (int8_t sd = -1; sd <= 1; sd += 2) {
+    auto arm = [&](int sd) {
         int ex, ey, hx, hy;
-        if (holding || pose == YPose::EAT || pose == YPose::RECOIL) {
+        if (rig) {
+            // Straight from the rig: whatever the dance says this frame.
+            const int8_t* a = rig->arms[sd < 0 ? 0 : 1];
+            ex = a[0]; ey = a[1]; hx = a[2]; hy = a[3];
+        } else if (holding || pose == YPose::EAT || pose == YPose::RECOIL) {
             // Reaching. Held rather than cycling -- this is a gesture with
             // a victim on the end of it, not a loop. holdDX/holdDY let the
             // eat sequence walk the hands from the snow up to eye level
@@ -6776,19 +7238,28 @@ static void snowYeti(TFT_eSPI& t, int x, int y, uint32_t now, YPose pose, int bu
             const int e = (c == 1) ? 1 : 0;
             t.fillRect(ahx - 4 + c * 3, ahy + 3 - e, 2, 4 + e, claw);
         }
+    };
+    const int behind = rig ? rig->behind : 0;
+    if (behind) arm(behind);
+    drawBody();
+    for (int sd = -1; sd <= 1; sd += 2) if (sd != behind) arm(sd);
+    // The head can click a pixel off the body (a rig's headShift); eyes can
+    // go dark for a blink; the mouth opens as wide as the rig says.
+    const int hl = lean + (rig ? rig->headShift : 0);
+    t.fillRect(x - 11 + hl, B - 52, 22, 4, mane);
+    t.fillRect(x - 13 + hl, B - 50, 3, 7, mane);
+    t.fillRect(x + 10 + hl, B - 50, 3, 7, mane);
+    t.fillRect(x - 10 + hl, B - 49, 20, 13, head);
+    if (!rig || !rig->eyesOff) {
+        t.fillRect(x - 7 + hl, B - 45, 6, 4, eye);
+        t.fillRect(x + 1 + hl, B - 45, 6, 4, eye);
+        t.fillRect(x - 7 + hl, B - 46, 3, 2, eye);
+        t.fillRect(x + 4 + hl, B - 46, 3, 2, eye);
     }
-    t.fillRect(x - 11 + lean, B - 52, 22, 4, mane);
-    t.fillRect(x - 13 + lean, B - 50, 3, 7, mane);
-    t.fillRect(x + 10 + lean, B - 50, 3, 7, mane);
-    t.fillRect(x - 10 + lean, B - 49, 20, 13, head);
-    t.fillRect(x - 7 + lean, B - 45, 6, 4, eye);
-    t.fillRect(x + 1 + lean, B - 45, 6, 4, eye);
-    t.fillRect(x - 7 + lean, B - 46, 3, 2, eye);
-    t.fillRect(x + 4 + lean, B - 46, 3, 2, eye);
-    const int th = (pose == YPose::EAT) ? 7 : ((pose == YPose::WINDED) ? 6 : 4);
-    t.fillRect(x - 7 + lean, B - 40, 14, th, tooth);
-    for (int i = 0; i < 4; i++) t.fillRect(x - 4 + i * 3 + lean, B - 40, 1, th, head);
-    if (pose == YPose::EAT) t.fillRect(x - 7 + lean, B - 40 + th / 2, 14, 1, head);
+    const int th = rig ? rig->mouth : ((pose == YPose::EAT) ? 7 : ((pose == YPose::WINDED) ? 6 : 4));
+    t.fillRect(x - 7 + hl, B - 40, 14, th, tooth);
+    for (int i = 0; i < 4; i++) t.fillRect(x - 4 + i * 3 + hl, B - 40, 1, th, head);
+    if (!rig && pose == YPose::EAT) t.fillRect(x - 7 + hl, B - 40 + th / 2, 14, 1, head);
 }
 
 // He is not only the hill's any more: the pet draws him too. Two of his five
@@ -6802,6 +7273,10 @@ void drawYeti(TFT_eSPI& t, int x, int baseY, uint32_t now, YetiPose pose) {
     case YetiPose::STAND:  break;
     }
     snowYeti(t, x, baseY, now, p);
+}
+
+void drawYetiRig(TFT_eSPI& t, int x, int baseY, uint32_t now, const YetiRig& r) {
+    snowYeti(t, x, baseY, now, YPose::WINDED, 0, false, 0, 0, &r);
 }
 
 // Anything the background needs drawn ON TOP of the mascot. Called by
@@ -6820,9 +7295,12 @@ void drawBackgroundOverlay(TFT_eSPI& t, uint32_t now) {
     const int w = s_wolfSayW;
     const int yStart = s_wolfSayTop;
         auto wolfBubble = [&](const char* txt, int by, uint8_t dim, bool big) {
-            t.setTextSize(big ? 2 : 1);
+            // The howl is the 6x8 font doubled everywhere; the lines are the
+            // pets' face, like the owl's (11 high at the 6x8 font, as before).
+            const uint8_t callerFont = t.textfont;
+            if (big) { t.setTextFont(1); t.setTextSize(2); } else petFontOn(t);
             const int bw = t.textWidth(txt) + (big ? 11 : 7);
-            const int bh = big ? 20 : 11;
+            const int bh = big ? 20 : t.fontHeight() + 3;
             int bx = w - 2 - bw;
             if (bx < 1)          bx = 1;
             if (by < yStart + 1) by = yStart + 1;
@@ -6840,6 +7318,7 @@ void drawBackgroundOverlay(TFT_eSPI& t, uint32_t now) {
             t.setTextColor(ink, paper);
             t.setCursor(bx + 4, by + (big ? 4 : 2));
             t.print(txt);
+            t.setTextFont(callerFont);
             t.setTextSize(1);
         };
 
@@ -6905,6 +7384,7 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         s_lodgeX = (float)(w + 140);
         for (uint8_t i = 0; i < PROP_N; i++)   { s_prop[i].x = (float)(i * (w + 70) / PROP_N); s_prop[i].b = (uint8_t)(i % 3); }
         s_nearX = (float)(w + 120);
+        s_iglooX = (float)(w + 40);         // the first one soon
         s_snLastMs = now; s_dawnAt = now;
         for (uint8_t i = 0; i < RIDER_N; i++) {
             s_rid[i].x = -40.0f; s_rid[i].air = 0.0f; s_rid[i].vy = 0.0f;
@@ -7227,6 +7707,13 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
         }
         s_nearX -= WORLD_SPD * PL_NEAR * ds;
         if (s_nearX < -60.0f) s_nearX = (float)(w + 60 + random(0, 700));
+        // The igloo goes by on the slope about every half minute, so nobody
+        // waits long for a knock -- and less often once he's yours.
+        s_iglooX -= WORLD_SPD * PL_ACT * ds;
+        if (s_iglooX < -40.0f) {
+            s_iglooX = Squachy::meatyUnlocked() ? (float)(w + 200 + random(0, 1400)) : (float)(w + 60 + random(0, 240));
+            s_iglooKnocks = 0;          // a fresh igloo, and a fresh count
+        }
     }
     for (uint8_t i = 0; i < PROP_N; i++) {
         const int px = (int)s_prop[i].x;
@@ -7244,6 +7731,14 @@ void drawSnowfall(TFT_eSPI& t, uint32_t now, int yStart, int yEnd) {
             for (int k = 0; k < 14; k++)
                 t.fillRect(px - 7 + k, gy - 1 - k, 1, k + 2, snowLit);
             t.fillRect(px + 5, gy - 15, 3, 3, snowDim);
+        }
+    }
+    {
+        const int ix = (int)s_iglooX;
+        if (ix > -30 && ix < w + 30) {
+            const int gy = groundAt(ix) + 2;
+            snowIgloo(t, ix, gy, now, snowLit, snowDim);
+            s_iglooHitX = ix; s_iglooHitY = gy; s_iglooAt = now;
         }
     }
     for (uint8_t i = 0; i < TREE_ACT; i++) {
@@ -7714,8 +8209,22 @@ static const uint8_t  GIB_CITY = 16;      // slots for the still rear skyline
 static const float    GIB_CAMY =  70.0f;  // camera height above the floor
 static const float    GIB_SPEED =  0.20f; // world units per millisecond
 
+// -DSQW_GIB_PROFILE=1 (bench): microseconds per part of the Gibson, and of
+// its sky, every 32 frames on the console.
+#if SQW_GIB_PROFILE
+static uint32_t s_gp[8], s_gpN = 0, s_gpAt = 0;
+#define GP_MARK(i) do { const uint32_t _m = micros(); s_gp[i] += _m - s_gpAt; s_gpAt = _m; } while (0)
+static uint32_t s_gs[6], s_gsAt = 0;
+#define GS_MARK(i) do { const uint32_t _m = micros(); s_gs[i] += _m - s_gsAt; s_gsAt = _m; } while (0)
+#else
+#define GP_MARK(i) do {} while (0)
+#define GS_MARK(i) do {} while (0)
+#endif
 void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                 const DetectionEngine& eng) {
+#if SQW_GIB_PROFILE
+    s_gpAt = micros();
+#endif
     const int w = t.width();
     if (yEnd - yStart < 48) return;
 
@@ -7893,6 +8402,10 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
     const float    lockA   = 1.0f - lockK * 0.7f;
     const uint16_t lockCol = colorFor(lockType);
 
+    GP_MARK(0);
+#if SQW_GIB_PROFILE
+    s_gsAt = micros();
+#endif
     // ---- night sky ---------------------------------------------------
     t.fillRect(0, yStart, w, yEnd - yStart, BG);
     {
@@ -7967,6 +8480,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // repainted as the moon tinted by that beam, at the same strength the
         // beam has against the sky. Under a thousand pixels, before the skyline,
         // so the buildings still eclipse it as before.
+        GS_MARK(0);
         int  tri[2][3][6];                       // [beam][level][x0,y0,x1,y1,x2,y2]
         bool triOn[2] = { false, false };
         {
@@ -8006,6 +8520,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // as fillTriangle() was handed them, so the tint stops precisely where
         // the beam does, and the moon's own colour at each pixel is worked out
         // from the same three craters it was drawn with.
+        GS_MARK(1);
         if (moonOn && (triOn[0] || triOn[1])) {
             static const uint8_t TINT[3] = { 96, 66, 44 };   // core, middle, edge
             auto inside = [](const int* v, int px, int py) {
@@ -8016,7 +8531,25 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
             };
             auto inCircle = [](int dx, int dy, int r) { return dx * dx + dy * dy <= r * r; };
             const int R = mr + 2;
-            for (int py = my - R; py <= my + R; py++) {
+            // Each beam triangle's bounding box, so a pixel nowhere near a
+            // beam skips the three edge tests -- for every pixel of the moon,
+            // every frame, those were 3.9 ms of the Gibson on the ESP32-C5
+            // (2026-10-12). The same pixels come out either way.
+            int  box[2][3][4];   // [beam][level][x0, y0, x1, y1]
+            bool nearMoon = false;
+            auto lo3 = [](int a, int b, int c) { return a < b ? (a < c ? a : c) : (b < c ? b : c); };
+            auto hi3 = [](int a, int b, int c) { return a > b ? (a > c ? a : c) : (b > c ? b : c); };
+            for (uint8_t L = 0; L < 2; L++) {
+                if (!triOn[L]) continue;
+                for (int q = 0; q < 3; q++) {
+                    const int* v = tri[L][q];
+                    int* b = box[L][q];
+                    b[0] = lo3(v[0], v[2], v[4]); b[2] = hi3(v[0], v[2], v[4]);
+                    b[1] = lo3(v[1], v[3], v[5]); b[3] = hi3(v[1], v[3], v[5]);
+                    if (b[2] >= mx - R && b[0] <= mx + R && b[3] >= my - R && b[1] <= my + R) nearMoon = true;
+                }
+            }
+            for (int py = my - R; nearMoon && py <= my + R; py++) {
                 if (py < yStart) continue;
                 for (int px = mx - R; px <= mx + R; px++) {
                     const int dx = px - mx, dy = py - my;
@@ -8025,8 +8558,11 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
                     int lvl = 3;
                     for (uint8_t L = 0; L < 2; L++) {
                         if (!triOn[L]) continue;
-                        for (int q = 0; q < 3 && q < lvl; q++)
+                        for (int q = 0; q < 3 && q < lvl; q++) {
+                            const int* b = box[L][q];
+                            if (px < b[0] || px > b[2] || py < b[1] || py > b[3]) continue;
                             if (inside(tri[L][q], px, py)) { lvl = q; break; }
+                        }
                     }
                     if (lvl > 2) continue;
                     uint16_t base = halo;
@@ -8054,6 +8590,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         // screens that draw this background each hand it a different band
         // height, so anything baked in pixels is right on one of them and wrong
         // on the other two.
+        GS_MARK(2);
         struct CityB { uint16_t xf, wf, hf; uint8_t hue, tone; };
         static CityB  city[GIB_CITY];
         static uint8_t cityN   = 0;
@@ -8221,6 +8758,8 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GS_MARK(3);
+    GP_MARK(1);
     // ---- floor -------------------------------------------------------
     {
         const float spacing = (float)GIB_SPAN / 17.0f;
@@ -8280,6 +8819,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(2);
     // ---- channel meter bridge ----------------------------------------
     // Thirteen live channel levels down the right edge, drawn BEFORE the
     // corridor so the towers pass in front of it.
@@ -8340,6 +8880,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(3);
     // ---- towers, far to near -----------------------------------------
     uint8_t order[GIB_N];
     float   zs[GIB_N];
@@ -8517,34 +9058,42 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         }
     }
 
+    GP_MARK(4);
     // ---- the instrument ----------------------------------------------
+    // In whole numbers, x 256 throughout (isin256, turnOf): two or three
+    // sines for every other column, and on the ESP32-C5 -- no floating-point
+    // unit -- that was most of a 60 ms background on the Marauder V8
+    // (2026-10-12). The shape is the same; only the arithmetic moved.
     const int      mid = yStart + bandH * 56 / 100;
-    const float    lim = (float)bandH * 0.24f;
+    const int32_t  lim = bandH * 6144 / 100;            // x 256: bandH x 0.24
     const uint16_t traceCol = locked ? blend(traceLit, lockCol, (uint16_t)(90.0f * lockA))
                                      : traceLit;
+    const uint16_t t300 = turnOf(now, 300.0f), t190 = turnOf(now, 190.0f), t38 = turnOf(now, 38.0f);
+    const int32_t  lockLeft = locked ? (int32_t)((1.0f - lockK) * 256.0f) : 0;   // x 256
     int prevY = mid;
     for (int x = 0; x < w; x += 2) {
-        const float chf = 1.0f + (float)x * 12.0f / (float)(w - 1);
-        int c0 = (int)chf; if (c0 < 1) c0 = 1; if (c0 > 13) c0 = 13;
-        const int   c1 = (c0 < 13) ? c0 + 1 : 13;
-        const float fr = chf - (float)c0;
-        float act = ((float)eng.channelActivity((uint8_t)c0) * (1.0f - fr)
-                   + (float)eng.channelActivity((uint8_t)c1) * fr) * 0.01f;
-        if (act > 1.0f) act = 1.0f;
+        const int chf = 256 + (x * 12 * 256) / (w - 1);   // x 256: channel 1..13 across the width
+        int c0 = chf >> 8; if (c0 < 1) c0 = 1; if (c0 > 13) c0 = 13;
+        const int c1 = (c0 < 13) ? c0 + 1 : 13;
+        const int fr = chf - c0 * 256;
+        int act = ((int)eng.channelActivity((uint8_t)c0) * (256 - fr)
+                 + (int)eng.channelActivity((uint8_t)c1) * fr) / 100;   // x 256, 0..1
+        if (act > 256) act = 256;
 
-        float v = sinf((float)x * 0.062f + (float)now / 300.0f) * lim * 0.15f
-                + sinf((float)x * 0.171f - (float)now / 190.0f) * lim * 0.10f;
-        v -= act * lim * 0.85f;                    // real traffic pushes the trace up
+        int32_t v = isin256((uint16_t)(x * 647  + t300)) * lim * 15 / 25600     // x 0.062 rad, x 0.15
+                  + isin256((uint16_t)(x * 1784 - t190)) * lim * 10 / 25600;    // x 0.171 rad, x 0.10
+        v -= act * lim * 85 / 25600;                // real traffic pushes the trace up
         if (locked) {
-            const float d = (float)(x - ringX);
-            float bell = 1.0f / (1.0f + d * d * 0.0011f);
-            bell *= bell;                       // tails tight enough to be local
-            v += bell * sinf(d * 0.42f - (float)now / 38.0f) * lim * 1.7f * (1.0f - lockK);
+            const int d = x - ringX;
+            int32_t bell = 65536 / (256 + d * d * 282 / 1000);   // x 256: 1 / (1 + d^2 x 0.0011)
+            bell = bell * bell / 256;                // tails tight enough to be local
+            v += (int32_t)((int64_t)bell * isin256((uint16_t)(d * 4381 - t38)) * lim * 17 * lockLeft
+                           / ((int64_t)10 * 256 * 256 * 256));   // d x 0.42 rad, x 1.7
         }
         if (v >  lim) v =  lim;
         if (v < -lim) v = -lim;
 
-        const int y = mid + (int)v;
+        const int y = mid + v / 256;
         int a = (y < prevY) ? y : prevY;
         int b = (y > prevY) ? y : prevY;
         if (a < yStart)   a = yStart;
@@ -8553,6 +9102,7 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
         prevY = y;
     }
 
+    GP_MARK(5);
     // ---- the feed ----------------------------------------------------
     t.setTextSize(1);
     const uint8_t step = (uint8_t)((now / 620u) % GIB_FEED_N);
@@ -8588,6 +9138,17 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
     const int labelY = yStart + 1;
     t.setCursor(labelY < ICON_BOX_H ? SETTINGS_ICON_W + 3 : 3, labelY);
     t.print("GIBSON // 2.4GHz");
+    GP_MARK(6);
+#if SQW_GIB_PROFILE
+    if (++s_gpN == 32) {
+        Serial.printf("[gib] us/frame: setup %lu  sky %lu  floor %lu  meters %lu  towers %lu  trace %lu  feed %lu\n",
+                      s_gp[0] / 32, s_gp[1] / 32, s_gp[2] / 32, s_gp[3] / 32, s_gp[4] / 32, s_gp[5] / 32, s_gp[6] / 32);
+        Serial.printf("[gib] sky: fill+stars+moon %lu  beams %lu  moon-in-beams %lu  city %lu\n",
+                      s_gs[0] / 32, s_gs[1] / 32, s_gs[2] / 32, s_gs[3] / 32);
+        memset(s_gs, 0, sizeof s_gs);
+        memset(s_gp, 0, sizeof s_gp); s_gpN = 0;
+    }
+#endif
 }
 
 
@@ -8595,17 +9156,22 @@ void drawGibson(TFT_eSPI& t, uint32_t now, int yStart, int yEnd,
 // paint the sky) and drawSunsetSun (to paint its horizon-cutout
 // stripes with the matching sky color instead of a flat erase) so the
 // sun reads as sinking INTO the sky rather than punching a hole in it.
+//
+// In 1/256ths rather than floats: it is asked once per sky row and once per
+// water row, and on the ESP32-C5 (no floating-point unit) the float version
+// was a measurable slice of SYNTHWAVE's frame.
 static uint16_t sunsetSkyColorAt(TFT_eSPI& t, int y, int yTop, int yHoriz) {
-    float tt = (float)(y - yTop) / (float)(yHoriz - yTop);
-    if (tt < 0.0f) tt = 0.0f;
-    if (tt > 1.0f) tt = 1.0f;
+    const int span = yHoriz - yTop;
+    int tt = span > 0 ? ((y - yTop) * 256) / span : 0;   // 0..256
+    if (tt < 0)   tt = 0;
+    if (tt > 256) tt = 256;
     uint8_t r, g, b;
-    if (tt < 0.5f) {
-        float bl = tt * 2.0f;
-        r = (uint8_t)(15 + bl * 150); g = 0; b = (uint8_t)(55 - bl * 20);
+    if (tt < 128) {
+        const int bl = tt * 2;
+        r = (uint8_t)((15 * 256 + bl * 150) / 256); g = 0; b = (uint8_t)((55 * 256 - bl * 20) / 256);
     } else {
-        float bl = (tt - 0.5f) * 2.0f;
-        r = (uint8_t)(165 + bl * 90); g = (uint8_t)(bl * 75); b = (uint8_t)(35 - bl * 15);
+        const int bl = (tt - 128) * 2;
+        r = (uint8_t)((165 * 256 + bl * 90) / 256); g = (uint8_t)((bl * 75) / 256); b = (uint8_t)((35 * 256 - bl * 15) / 256);
     }
     return t.color565(r, g, b);
 }
@@ -8740,6 +9306,27 @@ void drawRetroFloor(TFT_eSPI& t, uint32_t now, int yHoriz, int yBottom) {
 // matching drawSunsetSun's five concentric bands. Split out so the
 // water reflection below can shade itself the same way without
 // re-drawing circles it would then have to distort.
+// sunBandColor() with rr = ad / r taken as whole numbers: the water's
+// reflection asks once a row, and the C5 has no floating point.
+static uint16_t sunBandColorAt(int ad, int r) {
+    if (ad * 100 > 88 * r) return (uint16_t)0xF98A;
+    if (ad * 100 > 72 * r) return (uint16_t)0xFB25;
+    if (ad * 100 > 54 * r) return (uint16_t)0xFD22;
+    if (ad * 100 > 36 * r) return (uint16_t)0xFEA8;
+    return                        (uint16_t)0xFF92;
+}
+// floor(sqrt(v)) for v >= 0, in whole numbers.
+static int isqrtInt(int v) {
+    if (v <= 0) return 0;
+    uint32_t x = (uint32_t)v, r = 0, bit = 1u << 30;
+    while (bit > x) bit >>= 2;
+    while (bit) {
+        if (x >= r + bit) { x -= r + bit; r = (r >> 1) + bit; }
+        else r >>= 1;
+        bit >>= 2;
+    }
+    return (int)r;
+}
 static uint16_t sunBandColor(TFT_eSPI& t, float rr) {
     if (rr > 1.0f) rr = 1.0f;
     if (rr > 0.88f) return (uint16_t)0xF98A;
@@ -8771,8 +9358,19 @@ static uint16_t sunBandColor(TFT_eSPI& t, float rr) {
 // gradient function and circle equation the sky and sun were drawn
 // from, one span per row -- a few hundred draw calls rather than tens
 // of thousands, and it looks identical because it is the same maths.
+// -DSQW_SYNTH_PROFILE=1 (bench): microseconds per part of the scene, every
+// 32 frames on the console. How the water was found to be 70 ms on the C5.
+#if SQW_SYNTH_PROFILE
+static uint32_t s_sp[8], s_spN = 0, s_spAt = 0;
+#define SP_MARK(i) do { const uint32_t _m = micros(); s_sp[i] += _m - s_spAt; s_spAt = _m; } while (0)
+#else
+#define SP_MARK(i) do {} while (0)
+#endif
 void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
                    float horizonFrac) {
+#if SQW_SYNTH_PROFILE
+    s_spAt = micros();
+#endif
     const int w = t.width();
     const int band = yBottom - yTop;
     if (band < 48 || w < 32) return;
@@ -8813,6 +9411,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         t.drawPixel(stx[i], yTop + sty[i], t.color565(bri, bri, (uint8_t)(bri * 0.88f)));
     }
 
+    SP_MARK(0);
     // ---- sun -------------------------------------------------------
     const int sunR  = (skyH * 4) / 5;
     const int sunCx = w / 2;
@@ -8820,6 +9419,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
     // horizon put the top edge off the band entirely.
     const int sunCy = yHoriz - (sunR / 4);
     drawSunsetSun(t, sunCx, sunCy, sunR, yTop, yHoriz);
+    SP_MARK(1);
 
     // ---- ridgeline -------------------------------------------------
     // Two layers, paler and taller behind, darker in front, so the
@@ -8849,13 +9449,14 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
             int h0 = (pk[i]     * maxH) / 100;
             int h1 = (pk[i + 1] * maxH) / 100;
             for (int x = x0; x <= x1 && x < w; x++) {
-                float f = (x1 > x0) ? (float)(x - x0) / (float)(x1 - x0) : 0.0f;
-                int hh = h0 + (int)((h1 - h0) * f);
+                // The straight line between the two peaks, in whole numbers.
+                const int hh = h0 + (x1 > x0 ? ((h1 - h0) * (x - x0)) / (x1 - x0) : 0);
                 if (hh > 0) t.drawFastVLine(x, yHoriz - hh, hh, c);
             }
         }
     }
 
+    SP_MARK(2);
     // ---- birds -----------------------------------------------------
     // Drawn after the ridgeline so nothing occludes them: they are the
     // nearest thing in the scene. Position is derived straight from
@@ -8882,18 +9483,20 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
             birdsInited = true; birdW = w; birdH = skyH;
         }
         const uint16_t birdCol = (uint16_t)0x1824;
-        const float    span    = (float)(w + 28);
+        const uint32_t span    = (uint32_t)(w + 28);
         for (uint8_t i = 0; i < NBIRD; i++) {
-            const float spd = 0.009f + (float)(i % 3) * 0.005f;   // px per ms
-            const float fx  = fmodf((float)now * spd + (float)i * 63.0f, span) - 14.0f;
-            const int   x   = (int)fx;
+            // 0.009, 0.014 or 0.019 px per ms, in whole numbers: the C5 has
+            // no floating-point unit, and a float `now` loses whole
+            // milliseconds after four hours up.
+            const uint32_t spd = 9 + (uint32_t)(i % 3) * 5;          // px per 1000 ms
+            const int   x   = (int)(((uint64_t)now * spd / 1000 + (uint32_t)i * 63) % span) - 14;
             const int   y   = yTop + birdY[i];
             if (y < yTop + 1 || y >= yHoriz - 1) continue;
             const int   sz  = birdSz[i];
             // Wing beat. Each bird carries its own phase so the flock
             // does not pulse in unison, which reads as one object.
-            const float flap = sinf((float)now / (120.0f + i * 17.0f) + (float)i * 1.7f);
-            const int   dy   = (int)(flap * (float)sz * 0.7f);
+            const int   flap = isin256((uint16_t)(turnOf(now, 120.0f + i * 17.0f) + i * 17731));   // + i x 1.7 rad
+            const int   dy   = (flap * sz * 179) / 65536;                                         // x 0.7
             if (x - sz < 0 || x + sz >= w) continue;
             // Two shallow strokes per wing give the gull kink; a single
             // straight V reads as a chevron, not a bird.
@@ -8904,6 +9507,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         }
     }
 
+    SP_MARK(3);
     // ---- horizon bloom ---------------------------------------------
     for (int dy = -2; dy <= 1; dy++) {
         int y = yHoriz + dy;
@@ -8922,15 +9526,26 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
     // and show nothing. What reads as a moving surface is a travelling
     // *brightness* ripple, one sinf per row. The sun's reflection does
     // get displaced, because there the shape is visible.
+    //
+    // All in whole numbers (isin256, turnOf): up to six sines a row, a
+    // hundred-odd rows, and on the ESP32-C5 -- no floating-point unit --
+    // each sinf() was a hundred microseconds of software arithmetic. The
+    // water alone took 70 ms of an 85 ms frame on the Marauder V8
+    // (2026-10-12). d, the depth from horizon (0) to viewer (1), is kept as
+    // the row offset dy over seaH; each "d x k radians" becomes
+    // dy x (k x 65536 / 2 pi) / seaH of a sixteen-bit turn.
     const uint16_t waterBase = (uint16_t)0x0803;
+    const uint16_t t210 = turnOf(now, 210.0f), t130 = turnOf(now, 130.0f);
+    const uint16_t t190 = turnOf(now, 190.0f), t310 = turnOf(now, 310.0f);
+    const uint16_t t260 = turnOf(now, 260.0f), t153 = turnOf(now, 260.0f / 1.7f);
     for (int y = DrawBand::top(yHoriz); y < DrawBand::bot(yBottom); y++) {
-        const float d = (float)(y - yHoriz) / (float)seaH;   // 0 horizon, 1 viewer
-        const int srcY = yHoriz - (int)(d * skyH * 0.82f);
+        const int dy = y - yHoriz;                            // d = dy / seaH
+        const int srcY = yHoriz - (dy * skyH * 82) / (seaH * 100);
 
         // Two ripple rates so the surface never pulses uniformly.
-        float rip = sinf(d * 34.0f - (float)now / 210.0f)
-                  + 0.5f * sinf(d * 61.0f + (float)now / 130.0f);
-        int dim = (int)(196.0f - d * 118.0f + rip * 17.0f);
+        const int rip = isin256((uint16_t)((dy * 354633) / seaH - t210))            // d x 34
+                      + isin256((uint16_t)((dy * 636253) / seaH + t130)) / 2;       // d x 61
+        int dim = 196 - (dy * 118) / seaH + (rip * 17) / 256;
         if (dim < 24)  dim = 24;
         if (dim > 255) dim = 255;
         const uint16_t waterC =
@@ -8941,7 +9556,7 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         // the mirrored row.
         const int delta = srcY - sunCy;
         if (delta <= -sunR || delta >= sunR) continue;
-        const int half = (int)sqrtf((float)(sunR * sunR - delta * delta));
+        const int half = isqrtInt(sunR * sunR - delta * delta);
         if (half <= 0) continue;
 
         // Two incommensurate rates, not one. A single sine gives gaps at
@@ -8950,27 +9565,27 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         // frequency (and a different time rate) means the pattern never
         // repeats over the surface. They also open up toward the viewer,
         // where the water is choppier.
-        const float gapPhase = sinf(d * 62.0f - (float)now / 190.0f)
-                             + 0.55f * sinf(d * 23.0f + (float)now / 310.0f);
-        if (gapPhase > 0.05f - d * 0.40f) continue;
+        const int gap = isin256((uint16_t)((dy * 646683) / seaH - t190))                  // d x 62
+                      + (isin256((uint16_t)((dy * 239899) / seaH + t310)) * 141) / 256;   // 0.55, d x 23
+        if (gap > 13 - (dy * 102) / seaH) continue;                                       // 0.05 - d x 0.40
 
-        const float ph  = (float)now / 260.0f;
-        const float wob = sinf(d * 11.0f + ph)        * (2.0f + d * 11.0f)
-                        + sinf(d * 27.0f - ph * 1.7f) * (1.0f + d *  4.5f);
+        const int wob = (isin256((uint16_t)((dy * 114734) / seaH + t260)) * (512 + (dy * 2816) / seaH)     // d x 11, 2 + 11d
+                       + isin256((uint16_t)((dy * 281620) / seaH - t153)) * (256 + (dy * 1152) / seaH))    // d x 27, 1 + 4.5d
+                        / 65536;
 
-        const float rr = (float)(delta < 0 ? -delta : delta) / (float)sunR;
         // Blended over the water colour for this row, not over a flat
         // dark: reflected light sits *in* the surface. Blending the
         // sun's yellows against near-black was turning them olive.
-        const uint8_t a = (uint8_t)(228 - d * 128);
-        const uint16_t c = blend(waterC, sunBandColor(t, rr), a);
+        const uint8_t a = (uint8_t)(228 - (dy * 128) / seaH);
+        const uint16_t c = blend(waterC, sunBandColorAt(delta < 0 ? -delta : delta, sunR), a);
 
-        int x0 = sunCx - half + (int)wob;
+        int x0 = sunCx - half + wob;
         int xs = x0 < 0 ? 0 : x0;
         int xe = x0 + half * 2; if (xe > w) xe = w;
         if (xe > xs) t.drawFastHLine(xs, y, xe - xs, c);
     }
 
+    SP_MARK(4);
     // ---- grid ------------------------------------------------------
     // Rungs only. The converging lines to the vanishing point were
     // fighting the reflection: they cut across the sun's bands and
@@ -8987,6 +9602,14 @@ void drawSynthwave(TFT_eSPI& t, uint32_t now, int yTop, int yBottom,
         uint8_t fade = (uint8_t)(70 + tt * 185);   // brighter as it nears the viewer
         t.drawFastHLine(0, y, w, blend(BG, gridCol, fade));
     }
+    SP_MARK(5);
+#if SQW_SYNTH_PROFILE
+    if (++s_spN == 32) {
+        Serial.printf("[synth] us/frame: sky+stars %lu  sun %lu  ridge %lu  birds %lu  water %lu  grid %lu  (sun r %d, sky %d, sea %d)\n",
+                      s_sp[0] / 32, s_sp[1] / 32, s_sp[2] / 32, s_sp[3] / 32, s_sp[4] / 32, s_sp[5] / 32, sunR, skyH, seaH);
+        memset(s_sp, 0, sizeof s_sp); s_spN = 0;
+    }
+#endif
 }
 
 void drawGlitchText(TFT_eSPI& t, int y, const char* text,
@@ -9608,22 +10231,28 @@ void drawBangersOutline(TFT_eSPI& t, int x, int y, const char* s, uint16_t color
 // The strlen() check added below is the actual fix (forces a break the
 // moment the buffer itself would fill, independent of maxW); the wider
 // buffer just means that happens less often in the first place.
-uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
-                 char lines[][48], uint8_t maxLines) {
+// One body for both row widths: 48 for everything that has always used it,
+// 80 for running text on the large panels, where font 2 fits 70 letters to a
+// landscape line and a 48-letter row stopped every line two thirds across.
+template <size_t N>
+static uint8_t wrapInto(TFT_eSPI& t, const char* text, int maxW,
+                        char lines[][N], uint8_t maxLines) {
     // 320, not the original 160 -- fine for every short quip/bubble
     // this ran on originally, but LOG's MORE INFO panel passes real
     // paragraph-length explanations (the RSSI/confidence primer alone
     // is ~290 chars), which strncpy was silently truncating before a
-    // single word ever got wrapped.
-    char buf[320];
+    // single word ever got wrapped. The 80-letter form (the large panels)
+    // takes 640: the longest MORE INFO explanations run past 320, and with
+    // paging there is room to show every word of them.
+    char buf[N == 80 ? 640 : 320];
     strncpy(buf, text, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = 0;
 
     uint8_t n = 0;
-    char lineBuf[48] = "";
+    char lineBuf[N] = "";
     char* word = strtok(buf, " ");
     while (word) {
-        char trial[48];
+        char trial[N];
         if (lineBuf[0]) snprintf(trial, sizeof(trial), "%s %s", lineBuf, word);
         else            snprintf(trial, sizeof(trial), "%s", word);
         bool tooWide = lineBuf[0] &&
@@ -9643,6 +10272,15 @@ uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
     return n;
 }
 
+uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
+                 char lines[][48], uint8_t maxLines) {
+    return wrapInto<48>(t, text, maxW, lines, maxLines);
+}
+uint8_t wrapText(TFT_eSPI& t, const char* text, int maxW,
+                 char lines[][80], uint8_t maxLines) {
+    return wrapInto<80>(t, text, maxW, lines, maxLines);
+}
+
 // Info panel geometry -- see theme.h's comment on drawInfoPanel() for
 // what this is/who uses it.
 static const uint8_t INFO_MAX_LINES = 7;
@@ -9657,10 +10295,15 @@ static void infoRects(int screenW, int screenH,
     // description text (size 1, see drawInfoPanel()) still needs real
     // room, and a small-margin modal reads fine here since it's the
     // only thing on screen while it's up.
+    // Wider and taller on the large panels, where the text is the body font.
+    // In portrait there it takes most of the height too: the text is
+    // size 2, 25 letters to a line, and the longest explanation needs 13.
+    const bool big = s_large;
     pw = screenW - 16;
-    if (pw > 300) pw = 300;
+    if (pw > (big ? 440 : 300)) pw = big ? 440 : 300;
     ph = screenH - 8;
-    if (ph > 260) ph = 260;
+    const int phMax = big ? (screenH > screenW ? 440 : 304) : 260;
+    if (ph > phMax) ph = phMax;
     px = (screenW - pw) / 2;
     py = (screenH - ph) / 2;
 
@@ -9670,10 +10313,10 @@ static void infoRects(int screenW, int screenH,
     squachyBaseY = py + 88;
     squachyWander = pw / 2 - 40;
     if (squachyWander < 0) squachyWander = 0;
-    textTop = py + 104;
+    textTop = py + (big ? 92 : 104);
     textMaxW = pw - 16;
 
-    btnH = 26;
+    btnH = big ? 32 : 26;
     btnW = pw - 20;
     btnX = px + 10;
     btnY = py + ph - btnH - 8;
@@ -9700,7 +10343,18 @@ bool infoPanelHitDismiss(int x, int y, int screenW, int screenH) {
     float squachyScale;
     infoRects(screenW, screenH, px, py, pw, ph, headingY, squachyCx, squachyBaseY, squachyScale, squachyWander,
               textTop, textMaxW, btnX, btnY, btnW, btnH);
-    return x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH;
+    if (!(x >= btnX && x <= btnX + btnW && y >= btnY && y <= btnY + btnH)) return false;
+    // The large panels page their size-2 text the way the compact ones do:
+    // the button reads MORE until the last page.
+    if (s_large) {
+        static uint32_t last = 0;
+        const uint32_t now = millis();
+        if (now - last < 250) return false;     // one press, one page
+        last = now;
+        if (s_infoPage + 1 < s_infoPages) { s_infoPage++; return false; }
+        s_infoPage = 0;
+    }
+    return true;
 }
 
 void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
@@ -9760,20 +10414,44 @@ void drawInfoPanel(TFT_eSPI& t, int w, int h, uint32_t now,
 
     Squachy::drawWaving(t, squachyCx, squachyBaseY, now, squachyScale, nullptr, true, squachyWander);
 
-    t.setTextSize(1);
+    // The large panels set it at size 2, a page of as many lines as fit
+    // above the button; everywhere else the size-1 seven it always had.
+    // TEXT smaller sets it at size 1 there too, still paged.
+    t.setTextSize(s_large && fontDelta(Settings::FontKind::TEXT) >= 0 ? 2 : 1);
     t.setTextWrap(false);
     t.setTextColor(WHITE, BG);
-    char lines[INFO_MAX_LINES][48];
-    uint8_t n = wrapText(t, text, textMaxW, lines, INFO_MAX_LINES);
-    int ly = textTop;
-    for (uint8_t i = 0; i < n; i++) {
-        int lw = t.textWidth(lines[i]);
-        t.setCursor(px + (pw - lw) / 2, ly);
-        t.print(lines[i]);
-        ly += 12;
+    const int step = s_large ? t.fontHeight() + 3 : 12;
+    static const uint8_t WIDE_MAX = 32;
+    static char wide[WIDE_MAX][80];
+    char narrow[INFO_MAX_LINES][48];
+    int per = (btnY - 4 - textTop) / step;
+    if (per < 1) per = 1;
+    const uint8_t n = s_large ? wrapText(t, text, textMaxW, wide, WIDE_MAX)
+                              : wrapText(t, text, textMaxW, narrow, INFO_MAX_LINES);
+    int first = 0, last = n;
+    if (s_large) {
+        if (now - s_infoDrawnAt > 400) s_infoPage = 0;   // a new panel opens on page one
+        s_infoDrawnAt = now;
+        s_infoPages = (uint8_t)((n + per - 1) / per);
+        if (!s_infoPages) s_infoPages = 1;
+        if (s_infoPage >= s_infoPages) s_infoPage = 0;
+        first = s_infoPage * per;
+        last  = first + per < n ? first + per : n;
     }
+    int ly = textTop;
+    for (int i = first; i < last; i++) {
+        const char* line = s_large ? wide[i] : narrow[i];
+        int lw = t.textWidth(line);
+        t.setCursor(px + (pw - lw) / 2, ly);
+        t.print(line);
+        ly += step;
+    }
+    t.setTextSize(1);
 
-    drawButton(t, btnX, btnY, btnW, btnH, "[ GOT IT ]", false, 2);
+    char lbl[24];
+    if (s_large && s_infoPage + 1 < s_infoPages) snprintf(lbl, sizeof lbl, "[ MORE %u/%u ]", s_infoPage + 1, s_infoPages);
+    else                                         snprintf(lbl, sizeof lbl, "[ GOT IT ]");
+    drawButton(t, btnX, btnY, btnW, btnH, lbl, false, 2);
 }
 
 }  // namespace Theme

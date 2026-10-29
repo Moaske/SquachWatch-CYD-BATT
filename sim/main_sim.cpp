@@ -30,6 +30,7 @@
 #include "ui_log.h"
 #include "ui_alert.h"
 #include "ui_settings.h"
+#include "sim_detections.h"   // simMakeDetection(), for --alert on a kind the seeds lack
 #include "ui_diary.h"
 #include "ui_hunt.h"
 #include "ui_rawscan.h"
@@ -53,6 +54,7 @@
 #include "ignore_list.h"
 #include "ui_colorcheck.h"
 #include "ui_diagnostics.h"
+#include "gnss.h"
 #include "ui_desk.h"
 #include "ui_outfit.h"
 #include "ui_zone.h"
@@ -75,6 +77,11 @@
 #include "ui_wifinets.h"
 #include "png_writer.h"
 #include "touch_cal.h"
+#include "ui_lorahome.h"
+#include "ui_lorasettings.h"
+#include "ui_lorachat.h"
+#include "lora_channels.h"
+#include "lora_sim.h"           // the made-up band the LORA page reads
 
 // A few plausible log entries so screens have something real to draw --
 // counters, LOG rows, an ALERT target. Seeded through the engine's own
@@ -273,10 +280,42 @@ static int renderTouchCal(TFT_eSPI& tft, int W, int H, int skip, int want,
     return 0;
 }
 
+// One fix burst from sim/gps_sample.nmea, for --gps: satellites in view, a
+// GGA with a fix and an RMC with the date.
+static void gpsFeed(uint32_t nowMs) {
+    static const char* const BURST[] = {
+        "$GNGSV,1,1,04,02,45,120,24,05,30,210,29,12,60,045,34,15,20,300,39*67",
+        "$GNGGA,120000.000,3351.4000,S,15112.9000,E,1,08,1.2,25.3,M,22.1,M,,*6D",
+        "$GNRMC,120000.000,A,3351.4000,S,15112.9000,E,0.12,85.3,061026,,,A*6F",
+    };
+    for (const char* line : BURST) Gnss::sentence(line, nowMs);
+}
+
+// SQUACHSIM_LORACH: the channel chip's pick for network `net` (0 Meshtastic,
+// 1 MeshCore), set the way a tap leaves it -- by name in the settings store --
+// and both picks cleared first, because the NVS shim may remember a run.
+static void simLoraPick(uint8_t net) {
+    Settings::setLoraTxChan(false, "");
+    Settings::setLoraTxChan(true, "");
+    if (const char* ch = getenv("SQUACHSIM_LORACH")) Settings::setLoraTxChan(net != 0, ch);
+}
+
 static void usage() {
     fprintf(stderr,
         "usage: squachsim <screen> [out.png] [options]\n"
-        "  screens: clear log alert settings detfilter power diary hunt rawscan watchalert colorcheck boot phone meshmenu meshwarn bingo dex touchcal icons\n"
+        "  screens: clear log alert settings detfilter power diary hunt rawscan watchalert colorcheck boot phone meshmenu meshwarn bingo dex touchcal icons lora\n"
+        "  lora              the T-Deck's LORA page on a made-up band (sim/lora_sim.cpp), at\n"
+        "                    Bluff Creek; render it --size 320x240. --tab 1 opens MESHCORE.\n"
+        "                    SQUACHSIM_LORAQUIET=s: no packets for s seconds before the capture\n"
+        "                    SQUACHSIM_LORATYPE=TEXT: typed from the capture, then Enter\n"
+        "                    SQUACHSIM_LORATX=1: LORA TX on; SQUACHSIM_LORANEW=n: the NEW badge\n"
+        "                    SQUACHSIM_LORACH=name: the channel chip picks that channel of the\n"
+        "                    open tab's network (Yowie, #sasquatch, RidgeCrew); unset = default\n"
+        "  lorachat          the T-Deck's LORA CHATS with its compose line (--size 320x240);\n"
+        "                    --tab, SQUACHSIM_LORATYPE, SQUACHSIM_LORATX and SQUACHSIM_LORACH as lora\n"
+        "  lorasettings      the T-Deck's LORA SETTINGS page (--size 320x240): --scroll n moves it n rows,\n"
+        "                    --tap f:x:y taps it, SQUACHSIM_LORATYPE types into an open edit line\n"
+        "                    ('|' is Enter), SQUACHSIM_LORAREST=1 says the radios are resting\n"
         "  dex               --pose N opens entry N\'s card (1-17); 0 is the index\n"
         "  touchcal          the touch calibration, played by a scripted finger:\n"
         "                    --frames skips that many 66 ms frames, --sequence films\n"
@@ -291,8 +330,12 @@ static void usage() {
         "  --theme N         palette index\n"
         "  --alert N         DetectionType the ALERT screen fires on\n"
         "  --first / --night / --lastfree   the ALERT card's banners\n"
+        "                    SQUACHSIM_SNOOZE=\"30 MIN\": SNOOZE mid-pick on that step\n"
+        "                    SQUACHSIM_TOAST=\"HEAD|sub\": a toast over CLEAR\n"
         "  --noseed          no detections at all -- CLEAR's idle state\n"
-        "  --pet N           companion: 0 off, 1 VAPOR SHAGGY, 2 the yeti, 3 C1iPPY, 4 T0@$TY, 5 the ball\n"
+        "  --gps             a fresh GPS fix: CLEAR's GPS label, DIAGNOSTICS' GPS lines,\n"
+        "                    the ALERT card's place\n"
+        "  --pet N           companion: 0 off, 1 VAPOR SHAGGY, 2 the yeti, 3 C1iPPY, 4 T0@$TY, 5 the ball, 6 MEATY\n"
         "  --peer N          draw a visiting SquachMesh peer in outfit N\n"
         "  --peername NAME   give that visitor a custom name\n"
         "  --crowd N         clear screen: N squad members in range, roaming with ours\n"
@@ -346,6 +389,9 @@ int main(int argc, char** argv) {
     // and with detections always seeded the emulator could not render
     // the idle one at all. Same gap --alert filled from the other side.
     bool noSeed = false;
+    // --gps: a fresh fix from the sample file's sentences, fed just before
+    // each captured frame, so CLEAR, DIAGNOSTICS and ALERT show it.
+    bool gps = false;
     // SPIKE: --peer N draws a visiting Squachy in outfit N beside our own,
     // both at SMALL. No radio involved -- the point is to find out whether
     // two of him fit and whether the renderer survives being called twice.
@@ -389,6 +435,7 @@ int main(int argc, char** argv) {
         else if (a == "--night") alertNight = true;
         else if (a == "--lastfree") alertLastFree = true;
         else if (a == "--noseed") noSeed = true;
+        else if (a == "--gps") gps = true;
         else if (a == "--peer" && i + 1 < argc) peerOutfit = atoi(argv[++i]);
         else if (a == "--peername" && i + 1 < argc) peerName = argv[++i];
         else if (a == "--crowd" && i + 1 < argc) crowdN = atoi(argv[++i]);
@@ -416,7 +463,7 @@ int main(int argc, char** argv) {
     int H = portrait ? 320 : 240;
     if (!sizeArg.empty()) {
         int sw = 0, sh = 0;
-        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
+        if (sscanf(sizeArg.c_str(), "%dx%d", &sw, &sh) == 2 && sw > 63 && sh > 63) { W = sw; H = sh; Theme::setCompact(H < 200); Theme::setLarge((W < H ? W : H) >= 320); Theme::setStillBackdrop(getenv("SQUACHSIM_STILL") != nullptr); }
         else { fprintf(stderr, "--size wants WxH, e.g. 480x320" "\n"); return 2; }
     }
 
@@ -483,6 +530,7 @@ int main(int argc, char** argv) {
         if (petIdx == (int)Squachy::PetId::CLIPPY) Squachy::unlockClippy(nullptr);
         if (petIdx == (int)Squachy::PetId::TOASTER) Squachy::unlockToaster(nullptr);
         if (petIdx == (int)Squachy::PetId::BALL) Squachy::unlockBall();
+        if (petIdx == (int)Squachy::PetId::MEATY) Squachy::unlockMeaty(nullptr);
         for (int k = 0; k < 8 && (int)Squachy::petChoice() != petIdx; k++) Squachy::cyclePet();
     }
 
@@ -565,10 +613,30 @@ int main(int argc, char** argv) {
     if (getenv("SQUACHSIM_LEGEND")) Squachy::previewLegend(true);
     // SQUACHSIM_DEJA=ms brings TH3 0N3's deja vu cat round that often.
     if (const char* dj = getenv("SQUACHSIM_DEJA")) Squachy::t3DejaEvery = (uint32_t)atoi(dj);
+    // SQUACHSIM_BATT=54 (or 54c, on the cable): a battery for the lava lamp,
+    // the way the CBDs and the watch report theirs. Unset: no battery, as on
+    // the CYDs, and the screen is unchanged.
+    if (getenv("SQUACHSIM_BATT")) uiClearSetBatterySource([](uint8_t& pct, bool& chg) {
+        const char* b = getenv("SQUACHSIM_BATT");
+        pct = (uint8_t)atoi(b);
+        chg = strchr(b, 'c') != nullptr;
+        return true;
+    });
     // SQUACHSIM_PRIVACY=1: PRIVACY MODE on, for shots of the masked screens.
     if (getenv("SQUACHSIM_PRIVACY") && !Settings::privacyMode()) Settings::togglePrivacyMode();
     // SQUACHSIM_CLASSIC=1: DETECTIONS set to CLASSIC (NEARBY and the full counter rows).
     if (getenv("SQUACHSIM_CLASSIC") && Settings::detXp()) Settings::toggleDetXp();
+    // SQUACHSIM_FONTS=mtbs: the FONTS page's four sliders, one digit each for
+    // MENUS, TEXT, BUTTONS, BUBBLES -- 0..4 for -2..+2, 2 as built.
+    // SQUACHSIM_FONTPREVIEW=k: which kind the page's preview box shows.
+    if (const char* fp = getenv("SQUACHSIM_FONTPREVIEW")) uiSettingsSetFontPreview((uint8_t)atoi(fp));
+    // SQUACHSIM_FONTFACES=mtbsx: a face per kind, 0 as built, 1 PIXEL, 2 SMOOTH.
+    if (const char* ff = getenv("SQUACHSIM_FONTFACES"))
+        for (int i = 0; i < (int)Settings::FontKind::COUNT && ff[i]; i++)
+            Settings::setFontFace((Settings::FontKind)i, (uint8_t)(ff[i] - '0'));
+    if (const char* f = getenv("SQUACHSIM_FONTS"))
+        for (int i = 0; i < (int)Settings::FontKind::COUNT && f[i]; i++)
+            Settings::setFontStep((Settings::FontKind)i, (uint8_t)(f[i] - '0'));
     // SQUACHSIM_HEADSUP=TYPE|NAME: a squad heads-up arriving, the way
     // main.cpp shows one (banner plus Squachy's line), e.g. 1|NESSIE for a
     // Flock. The banner is drawn on CLEAR only while this is set.
@@ -583,9 +651,29 @@ int main(int argc, char** argv) {
         Theme::showToast("HEADS-UP", huSub, Theme::AMBER, 8000);
         Squachy::announce(huLine);
     }
+    // SQUACHSIM_POWEROFF=1: the note the Freenove S3 boards show while BOOT
+    // is held toward POWER OFF, for the release clip.
+    if (getenv("SQUACHSIM_POWEROFF")) Theme::showToast("POWER OFF", "KEEP HOLDING BOOT", Theme::AMBER, 8000);
+    // SQUACHSIM_TOAST="HEAD|sub": any toast over CLEAR, for a release clip
+    // (the SNOOZED one the alert card leaves behind).
+    static char toastHead[24], toastSub[40];
+    const bool simToast = getenv("SQUACHSIM_TOAST") != nullptr;
+    if (simToast) {
+        sscanf(getenv("SQUACHSIM_TOAST"), "%23[^|]|%39[^\n]", toastHead, toastSub);
+        Theme::showToast(toastHead, toastSub, Theme::AMBER, 8000);
+    }
+    // SQUACHSIM_SAY="LINE": a line in his bubble as the screen opens, for
+    // comparing bubble sizes across panels.
+    if (const char* say = getenv("SQUACHSIM_SAY")) Squachy::announce(say);
     // SQUACHSIM_CLIPCATCH=TYPE: C1iPPY has just seen a catch of that type and
     // has his expert opinion ready.
     if (const char* cc = getenv("SQUACHSIM_CLIPCATCH")) Pet::noteCatch((uint8_t)atoi(cc));
+    // SQUACHSIM_YETI=0 or 1: the yeti pet (--pet 2) comes straight on and
+    // dances the disco (0) or the floss (1).
+    if (const char* yd = getenv("SQUACHSIM_YETI")) Pet::yetiDance((int8_t)atoi(yd));
+    // SQUACHSIM_MEATY=0..3: MEATY (--pet 6) does the igloo, the hot dog,
+    // Shake it, or splits into three.
+    if (const char* mw = getenv("SQUACHSIM_MEATY")) Pet::meatyAct((int8_t)atoi(mw));
     // SQUACHSIM_JAIL=1: arrested as the screen opens, sirens and all; =2 is
     // already serving, the ball in place.
     if (const char* jl = getenv("SQUACHSIM_JAIL")) {
@@ -637,6 +725,16 @@ int main(int argc, char** argv) {
     // last frame.
     const uint32_t STEP_MS = 33;   // ~30fps, close to the device's real loop rate
     uint32_t now = millis();
+    // SQUACHSIM_T0 pins the first frame's time as well, so two renders of the
+    // same screen are byte-identical: with the wall clock here, a background
+    // or a blink lands a few milliseconds apart from run to run, and a
+    // comparison meant to prove a change left a board alone is all noise.
+    if (const char* t0 = getenv("SQUACHSIM_T0")) now = (uint32_t)strtoul(t0, nullptr, 10);
+    // The LORA page's band has a history -- chats from half an hour ago, the
+    // last 80 seconds of packets -- and all of it is millis(), which starts at
+    // zero here. An hour after boot, unless pinned, so none of it is "before
+    // the board was on".
+    else if (screen == "lora" || screen == "lorasettings" || screen == "lorachat") now = 3600000u;
 
     // Virtual time, in the ONE-SHOT renderer too, not just the interactive
     // emulator.
@@ -657,10 +755,19 @@ int main(int argc, char** argv) {
     SimClock::virtualTime = true;
     SimClock::nowMs       = now;
 
+    // The LORA page's compose line, typed: one key every two frames from the
+    // capture (SQUACHSIM_LORATYPE), then Enter.
+    const char* loraType = (screen == "lora" || screen == "lorasettings" || screen == "lorachat") ? getenv("SQUACHSIM_LORATYPE") : nullptr;
+    const bool loraRest = getenv("SQUACHSIM_LORAREST") != nullptr;
+    // LORA SETTINGS types from frame 30 of the warm-up, after the --tap that
+    // opens an edit line, so the capture shows the line typed.
+    // LORA CHATS from frame 10, so the capture shows forty keys of it typed.
+    const uint32_t loraTypeAt = now + (uint32_t)(screen == "lorasettings" ? 30 : screen == "lorachat" ? 10 : frames) * STEP_MS;
+    size_t loraTyped = 0;
     auto tick = [&](uint32_t t) {
         SimClock::nowMs = t;
         if      (screen == "clear")    { Theme::setRedGlyph(!Squachy::th3Unlocked()); uiClearEmoteTick(t); uiClearTick(frame, t, engine, true, false);
-                                         if (headsUp) Theme::drawToast(frame, t); }
+                                         if (headsUp || simToast || getenv("SQUACHSIM_POWEROFF")) Theme::drawToast(frame, t); }
         else if (screen == "log") {
             const bool info = (infoType >= 0);
             const DetectionType it = info ? (DetectionType)infoType : DetectionType::UNKNOWN;
@@ -669,7 +776,16 @@ int main(int argc, char** argv) {
                       info ? DetectionInfo::explainLive(it, engine) : "",
                       false, false, false);   // no confirm panel in the sim: nothing watched, nothing hunted
         }
-        else if (screen == "alert")    uiAlertTick(frame, t, engine, false, nullptr, "");
+        else if (screen == "alert")    {
+            // SQUACHSIM_SNOOZE=label: SNOOZE mid-pick, showing that step, its
+            // bar running out over 3 s from the capture's start.
+            if (const char* snz = getenv("SQUACHSIM_SNOOZE")) {
+                const uint32_t from = now + (uint32_t)frames * STEP_MS;
+                const uint32_t gone = t > from ? (t - from) / 3 : 0;
+                uiAlertSetSnoozePick(snz, (uint16_t)(gone >= 1000 ? 0 : 1000 - gone));
+            }
+            uiAlertTick(frame, t, engine, false, nullptr, "");
+        }
         else if (screen == "settings") uiSettingsTick(frame, t, engine);
         else if (screen == "detfilter") uiDetFilterTick(frame, t, engine);
         else if (screen == "power")    uiPowerTick(frame, t, engine);
@@ -748,6 +864,20 @@ int main(int argc, char** argv) {
             info.resetReason = "POWERON_RESET";
             info.boardName = "cyd";
             info.usingCapTouch = false;
+            if (gps) {
+                const Gnss::Fix& f = Gnss::fix();
+                const Gnss::Sky k = Gnss::sky();
+                info.gpsShown = true;
+                info.gpsGood = Gnss::good(); info.gpsBad = Gnss::bad();
+                info.view = k.view; info.heard = k.heard; info.used = f.used;
+                info.accM = f.accM; info.lat7 = f.lat7; info.lon7 = f.lon7;
+                info.fixAgeMs = f.atMs ? t - f.atMs : UINT32_MAX;
+                info.fresh = Gnss::fresh(t); info.faked = Gnss::faked();
+                // A drive in progress, so the render shows the wardrive lines.
+                info.wdOn = true; info.wdState = 4;   // LOGGING
+                info.wdWritten = 42; info.wdSkipped = 310; info.wdDropped = 0;
+                info.wdFile = "/wigle-20261006-1200.csv";
+            }
             uiDiagnosticsTick(frame, t, engine, info);
         }
         else if (screen == "boot")     uiBootTick(frame, t);
@@ -760,6 +890,35 @@ int main(int argc, char** argv) {
         else if (screen == "sysprops") uiSysPropsTick(frame, t, engine);
         else if (screen == "wifinets") uiWifiNetsTick(frame, t);
         else if (screen == "wifiadd")  uiWifiAddTick(frame, t, engine);
+        else if (screen == "lora") {
+            SimLora::step(t);
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped <= len; loraTyped++)
+                    uiLoraHomeKey(loraTyped < len ? loraType[loraTyped] : '\n', t);
+            }
+            uiLoraHomeTick(frame, t);
+        }
+        else if (screen == "lorachat") {
+            SimLora::step(t);
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraChatKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraChatTick(frame, t);
+        }
+        else if (screen == "lorasettings") {
+            SimLora::step(t);
+            // Typed into whatever edit line a --tap opened, from the capture
+            // on; a '|' in the text is Enter.
+            if (loraType && t >= loraTypeAt) {
+                const size_t want = (t - loraTypeAt) / (2 * STEP_MS) + 1, len = strlen(loraType);
+                for (; loraTyped < want && loraTyped < len; loraTyped++)
+                    uiLoraSettingsKey(loraType[loraTyped] == '|' ? '\n' : loraType[loraTyped], t);
+            }
+            uiLoraSettingsTick(frame, t, loraRest);
+        }
         else if (screen == "poses") {
             // Every arm movement he has, for the costume test in
             // sim/test_outfit_poses.py: IDLE, WAVE, then each VisitPose, each at
@@ -917,6 +1076,38 @@ int main(int argc, char** argv) {
         }
     }
     else if (screen == "wifinets")   uiWifiNetsInit(frame);
+    else if (screen == "lora") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        lc.quietSecs = getenv("SQUACHSIM_LORAQUIET") ? (uint16_t)atoi(getenv("SQUACHSIM_LORAQUIET")) : 0;
+        lc.net       = tabIdx ? 1 : 0;
+        lc.unread    = getenv("SQUACHSIM_LORANEW") ? (uint16_t)atoi(getenv("SQUACHSIM_LORANEW")) : 0;
+        // LORA TX set, not cycled blind: the NVS shim may remember a run.
+        const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
+        for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
+        SimLora::begin(lc);
+        simLoraPick(lc.net);
+        uiLoraHomeInit(frame);
+        uiLoraHomeSetNet(lc.net);
+    }
+    else if (screen == "lorachat") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        lc.net       = tabIdx ? 1 : 0;
+        const bool tx = getenv("SQUACHSIM_LORATX") || getenv("SQUACHSIM_LORATYPE");
+        for (int g = 0; g < 3 && (Settings::loraTxDbm() != 0) != tx; g++) Settings::cycleLoraTx();
+        SimLora::begin(lc);
+        simLoraPick(lc.net);
+        uiLoraChatSelect(lc.net);
+        uiLoraChatInit(frame);
+    }
+    else if (screen == "lorasettings") {
+        SimLora::Config lc;
+        lc.captureAt = now + (uint32_t)frames * STEP_MS;
+        SimLora::begin(lc);
+        simLoraPick(tabIdx ? 1 : 0);
+        uiLoraSettingsInit(frame, true);
+    }
     else if (screen == "wifiadd")    uiWifiAddInit(frame);
     else if (screen == "dex") {
         // Eleven of the seventeen caught, through the engine's own door, with
@@ -1073,8 +1264,13 @@ int main(int argc, char** argv) {
                 const Detection* c = engine.logAt(i);
                 if (c && (int)c->type == alertType) { d = c; break; }
             }
+            // A kind the seed list does not carry (AXON, RAVEN, the trackers)
+            // is made up on the spot from its emulator profile, the way the
+            // live emulator's T command does -- so every kind can be alerted on.
+            static Detection synth;
+            if (!d && simMakeDetection(synth, (DetectionType)alertType, SimClock::nowMs)) d = &synth;
             if (!d) {
-                fprintf(stderr, "no seeded detection of type %d -- see seedDetections()\n",
+                fprintf(stderr, "no seeded detection or emulator profile of type %d\n",
                         alertType);
                 return 1;
             }
@@ -1083,6 +1279,10 @@ int main(int argc, char** argv) {
         }
         if (!d) { fprintf(stderr, "no seeded detection to alert on\n"); return 1; }
         uiAlertInit(frame, *d);
+        if (gps) {
+            gpsFeed(now);
+            uiAlertSetPlace(true, Gnss::fix().lat7, Gnss::fix().lon7, false);
+        }
         // The banners, the way main.cpp sets them: after init, which clears them.
         if (alertFirst)    uiAlertSetFirst(true);
         if (alertNight)    uiAlertSetNight(true);
@@ -1102,6 +1302,7 @@ int main(int argc, char** argv) {
         else if (screen == "light")      uiLightScroll(1);
         else if (screen == "detfilter")  uiDetFilterScroll(1);
         else if (screen == "ignorelist") uiIgnoreListScroll(1);
+        else if (screen == "lorasettings") uiLoraSettingsScrollBy(26);
         else                             uiSettingsScroll(1);
     }
 
@@ -1113,11 +1314,15 @@ int main(int argc, char** argv) {
     // landed, then a pet (or, on his shades with the aura lit, a reading).
     // Anything else is the background's.
     auto tapAt = [&](int x, int y, uint32_t when) {
-        if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }
+        if (screen == "lorasettings") { uiLoraSettingsTap(x, y, when); return; }
+        // The pet first, as on the board: a still tap is a grab and a let-go.
+        if (Pet::clippyHit(x, y)) { Pet::clippyGrab(x, y, when); Pet::clippyRelease(when); }
+        else if (Squachy::hitTest(x, y)) { Squachy::noteTapAt(x, y); Squachy::trigger(Squachy::Event::PETTED); }
         else {
             Theme::backgroundTap(x, y, when);
             if (Theme::consumeOwlReek()) Squachy::unlockShambler();
             if (Theme::consumeRedGlyph()) Squachy::unlockTh3();
+            if (Theme::consumeIglooKnock()) Squachy::unlockMeaty("Who's there? Oh. It's you. I'm comin' out.");
         }
         Theme::setOwlAsks(!Squachy::shamblerUnlocked());
         Theme::setRedGlyph(!Squachy::th3Unlocked());
@@ -1138,8 +1343,13 @@ int main(int argc, char** argv) {
         if (!grabbed) { grabbed = true; Squachy::trigger(Squachy::Event::HELD); }
         Squachy::grabTo(grabX, grabY);
     };
+    // SQUACHSIM_WANDERAT=n starts the wander at warm-up frame n instead of
+    // at the capture, so a clip can open partway through it.
+    const int wanderAt = getenv("SQUACHSIM_WANDERAT") ? atoi(getenv("SQUACHSIM_WANDERAT")) : -1;
+    const int8_t wanderDir = getenv("SQUACHSIM_WANDER") && atoi(getenv("SQUACHSIM_WANDER")) < 0 ? -1 : 1;
     for (int i = 0; i < frames; i++) {
         const uint32_t tNow = now + (uint32_t)i * STEP_MS;
+        if (i == wanderAt) { SimClock::nowMs = tNow; Squachy::wanderNow(wanderDir); }
         if (i > 20) grabStep();
         if (!tick(tNow)) { usage(); return 2; }
         // After the frame, so the tap lands on something just drawn:
@@ -1196,12 +1406,23 @@ int main(int argc, char** argv) {
         const uint32_t sNow = now + (uint32_t)(frames + s) * STEP_MS;
         grabStep();
         throwStep(s, sNow);
+        // SQUACHSIM_WANDER=1 or -1: his edge-to-edge wander, starting with the capture.
+        if (s == 0 && wanderAt < 0 && getenv("SQUACHSIM_WANDER")) { SimClock::nowMs = sNow; Squachy::wanderNow((int8_t)atoi(getenv("SQUACHSIM_WANDER"))); }
+        if (gps) gpsFeed(sNow);
         tick(sNow);
         // --tap frame numbers run straight on through the capture, so a tap
         // can land on a frame you can actually look at afterwards.
         for (int k = 0; k < tapN; k++)
             if (taps[k].f == frames + s) tapAt(taps[k].x, taps[k].y, sNow);
         xyzzyStep();
+        // SQUACHSIM_PETLOG=1: the pet's drawn position every captured frame,
+        // and Squachy's, for checking that nothing teleports.
+        if (getenv("SQUACHSIM_PETLOG")) {
+            int px = -999, py = -999, cx = -999, hw = 0, tp = 0, bt = 0;
+            Pet::drawnAt(px, py);
+            Squachy::lastFootprint(cx, hw, tp, bt);
+            printf("petlog %d %d %d %d\n", s, px, py, cx);
+        }
         frame.pushSprite(0, 0);
         std::vector<uint8_t> rgb = toRgb888(tft.pixelsRGB565());
 

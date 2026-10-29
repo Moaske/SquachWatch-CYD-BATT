@@ -1,0 +1,20 @@
+# SquachWatch — two-slot partition table for the 8 MB Marauder V8 (ESP32-C5).
+#
+# The C5 build links at ~2.4 MB (Arduino core 3 / IDF 5.5), past the 4 MB
+# table's 1.9 MB slots, and the 16 MB table does not fit this flash. nvs and
+# otadata keep the exact offsets and sizes every other table uses (see
+# partitions_ota_16mb.csv for why: settings survive a table change).
+#
+#   0x009000   20 KB  nvs
+#   0x00E000    8 KB  otadata     which slot the bootloader should run
+#   0x010000  3.5 MB  app0
+#   0x390000  3.5 MB  app1
+#   0x710000  896 KB  (free)      unassigned: the black box lives here
+#   0x7F0000   64 KB  coredump
+#
+# Name,   Type, SubType, Offset,    Size,     Flags
+nvs,      data, nvs,     0x9000,    0x5000,
+otadata,  data, ota,     0xe000,    0x2000,
+app0,     app,  ota_0,   0x10000,   0x380000,
+app1,     app,  ota_1,   0x390000,  0x380000,
+coredump, data, coredump,0x7F0000,  0x10000,

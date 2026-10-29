@@ -70,7 +70,7 @@ namespace Settings {
     // The desk clock. FONT: 0 the segment digits, 1 Bangers. SIZE: 0 small,
     // 1 medium (the size it has always been), 2 large. BACKDROP: what plays
     // inside its plate -- 0 plain, 1 digital rain, 2 snow, 3 flying toasters,
-    // 4 fire, 5 starfield, 6 fireflies.
+    // 4 fire, 5 starfield, 6 fireflies. The time format is 12 or 24 hour.
     uint8_t     clockFont();
     const char* clockFontName();
     void        cycleClockFont();
@@ -81,6 +81,8 @@ namespace Settings {
     const char* clockBackdropName();
     void        cycleClockBackdrop();
     void        cyclePrevClockBackdrop();
+    bool        clock24Hour();
+    void        toggleClock24Hour();
     void       cyclePrevBackground(); // same, but backward
 
     // Disables the two CLEAR-screen gestures that cycle background
@@ -125,6 +127,10 @@ namespace Settings {
     // first time the button turns the screen off.
     bool       pocketNoteShown();
     void       markPocketNoteShown();
+    // What the yeti pet has been found to do: bit 0 he has been thrown, bit
+    // 1 he has been tapped (and danced). Until each is, his lines drop hints.
+    uint8_t    yetiFound();
+    void       markYetiFound(uint8_t bits);
 
     // Disables the title-bar rotate button (and the ROTATED gesture it
     // triggers) without touching its icon -- an accidental tap during
@@ -142,6 +148,17 @@ namespace Settings {
     // the full counter rows at the bottom, as before v1.31.0).
     bool       detXp();
     void       toggleDetXp();
+
+    // FONTS on the APPEARANCE page: a slider per kind of text, around the
+    // size each board was built with. 0..4 for -2..+2; 2 is as built. Theme
+    // decides what a step means on this board and how far it can go
+    // (Theme::fontDelta(), Theme::fontRange()).
+    enum class FontKind : uint8_t { MENUS = 0, TEXT, BUTTONS, BUBBLES, XP_TILES, PETS, COUNT };
+    uint8_t    fontStep(FontKind k);
+    void       setFontStep(FontKind k, uint8_t step);
+    // And a face: 0 as built, 1 PIXEL, 2 SMOOTH (Theme::fontSmooth()).
+    uint8_t    fontFace(FontKind k);
+    void       setFontFace(FontKind k, uint8_t face);
 
     // Last rotation (0..3, TFT_eSPI's setRotation() values) the rotate
     // button left the screen on -- so it comes back up the same way
@@ -287,6 +304,19 @@ namespace Settings {
     bool        buzzerOn();
     void        toggleBuzzer();
 
+    // ---- SOUND -----------------------------------------------------------
+    // The Freenove S3 boards' speaker (sound.h). SOUND is 0 OFF (the
+    // default: opt in, like the buzzer), 1 ALERTS (a new device, a watch-list
+    // hit, a low battery) or 2 ALL (those plus the squad, the throws, the
+    // pets and the lamp's cable). VOLUME is a percent, 0..100 in steps of
+    // ten from the row's - and + buttons (like BRIGHT). Only the boards with
+    // a speaker show the rows; the values are kept everywhere.
+    uint8_t     soundMode();
+    const char* soundModeName();
+    void        cycleSoundMode();
+    uint8_t     soundVolume();                    // 0..100
+    void        adjustSoundVolume(int8_t delta);  // clamps, persists
+
     // ---- LORA ------------------------------------------------------------
     // The wireless slot: OFF, FOCUS on one profile, or SURVEY over the band
     // (Lora::Mode's values), and which profile FOCUS parks on (an index into
@@ -300,8 +330,14 @@ namespace Settings {
     // default: the radio takes turns between the two). Applied by
     // Lora::applyListen().
     uint8_t     loraListen();
+    void        setLoraListen(uint8_t v);   // 0 off, 1 Meshtastic, 2 MeshCore, 3 both
     void        cycleLoraListen();
     const char* loraListenName();
+    // LORA TX (the T-Deck): what the chats' compose line sends at. 0 = off,
+    // else dBm. Off by default: a sniffer that talks is opt-in.
+    uint8_t     loraTxDbm();
+    void        cycleLoraTx();         // OFF -> 10 dBm -> 20 dBm -> OFF
+    const char* loraTxName();
     uint8_t     loraRegion();
     void        setLoraRegion(uint8_t r);
     uint8_t     loraFocus();
@@ -330,6 +366,57 @@ namespace Settings {
     void        toggleLoraLookupOgn();
     bool        loraLookupFeed();        // meshcore.df0x.de recent adverts, to name MeshCore rows
     void        toggleLoraLookupFeed();
+
+    // The LORA SETTINGS page's own (the T-Deck, from the LORA page's SET).
+    // The name both networks see, typed on the keyboard, and Meshtastic's
+    // four-character short name. "" for either means the default -- the squad
+    // nickname, and SQWT or its first four (include/lora_myname.h) -- and is
+    // what an untouched board has. Keys "loraName" and "loraShort".
+    const char* loraName();
+    void        setLoraName(const char* n);      // cleaned (lora_myname.h); "" or null clears
+    const char* loraShortName();
+    void        setLoraShortName(const char* n);
+    // ANNOUNCE NAME: the Meshtastic NodeInfo before a text. ON by default.
+    // Key "loraAnnc".
+    bool        loraAnnounce();
+    void        toggleLoraAnnounce();
+    // SQUACHWATCH DETECTIONS: 0 ON (the default), 1 OFF ON LORA PAGE (WiFi and
+    // Bluetooth rest while the LORA page, its settings or the chats are up),
+    // 2 OFF (rest everywhere, until switched back). main.cpp's
+    // loraRadioTick() does the resting. Key "loraDet".
+    uint8_t     loraDetect();
+    void        cycleLoraDetect();               // ON -> OFF ON LORA PAGE -> OFF -> ON
+    const char* loraDetectName();
+    // ON-SCREEN DETECTIONS: whether a catch may pop the ALERT card (and its
+    // sound) over the LORA page, its settings or the chats. ON by default;
+    // OFF still catches, logs and counts. Key "loraAlrt".
+    bool        loraAlerts();
+    void        toggleLoraAlerts();
+    // HOPS: the hop limit (and hop start) on every Meshtastic frame this board
+    // sends, texts and the NodeInfo. 1-7, 3 by default. Key "loraHops".
+    uint8_t     loraHops();
+    void        cycleLoraHops();                 // 3 -> 4 ... 7 -> 1 ... 3
+    // MESSAGE SOUND: the ding (T-Deck) or buzz (watch) for a new LoRa chat
+    // message. ON by default. Key "loraMsgSnd".
+    bool        loraMsgSound();
+    void        toggleLoraMsgSound();
+    // MESHTASTIC PRESET: the preset Meshtastic is listened to and sent on, by
+    // name ("MediumFast"), so it means the same in EU 868 and US 915. "" is
+    // the default, LongFast. Found in the band plan by Lora::meshPresetFind.
+    // Key "loraMtPre".
+    const char* loraMtPreset();
+    void        setLoraMtPreset(const char* name);
+    // The CHANNEL CHIP on the T-Deck's compose lines: which channel each
+    // network's texts go out on, by NAME ("#hiking", "RidgeCrew"), never by
+    // index -- an index shifts when a channel above it is removed on the
+    // CHANNELS page, and a send that slid onto the neighbouring channel is the
+    // one mistake a picker must not make. "" is the default (Meshtastic: the
+    // preset's own channel; MeshCore: Public) and is the absence of the key.
+    // Lora::Chan::txPick (include/lora_channels.h) turns it into a channel and
+    // falls back to the default when the name is gone. Keys "loraTxChMt" and
+    // "loraTxChMc".
+    const char* loraTxChan(bool meshcore);
+    void        setLoraTxChan(bool meshcore, const char* name);
 
     // The channel keys the two mesh decoders hold, as one opaque blob. The
     // record format is Lora::Chan's business (include/lora_channels.h); this
@@ -481,6 +568,10 @@ namespace Settings {
     // than standing. 1 is the old behaviour -- one visitor, both of them on
     // the ground. Measured on hardware: eight at the size they shrink to cost
     // LESS to draw than the two at today's size do (17.6 ms against 29).
+    //
+    // NONE (0) puts nobody else on screen at all -- no visit, no crowd -- for a
+    // bench of boards that should each show just its own Squachy; the badge,
+    // messages and heads-ups still work.
     //
     // Any number from one to eight, and EIGHT IS NOT ARBITRARY: the radio's
     // squad ring holds eight (SQUAD_N in mesh.cpp), so a ninth board in the

@@ -1,6 +1,10 @@
 // SquachWatch-CYD — clear (idle) screen implementation
 #include "ui_clear.h"
+#if SQUACH_LORA && defined(TDECK_PLUS)
+#include "ui_lorachat.h"   // the LORA n NEW pill: the tiles drop under it while it is up
+#endif
 #include "clock.h"      // the watch's corner clock
+#include "sound.h"      // yoo-hoo, when a visitor walks in
 #include "draw_band.h"
 #include "frame_prof.h"
 // Needed this early: the message helpers sit up with the visit machine,
@@ -11,6 +15,7 @@
 #include "meshtalk.h"
 #if SQUACH_MESH
 #include "squachmesh.h"
+#include "mesh_visit_appearance.h"
 #include "meshtutor.h"
 #include "squachy.h"
 #include "detection.h"
@@ -18,6 +23,9 @@
 #include "emote_script.h"
 #include <esp_system.h>
 #include "crowd_bench.h"
+#if defined(CYD_GPS)
+#include "gnss.h"       // the GPS label in the top bar
+#endif
 
 // A peer supplied from outside -- the emulator's --peer flag today, the radio
 // eventually. Always wins over the demo below.
@@ -1510,11 +1518,11 @@ static void drawPieceFx(TFT_eSPI& t, uint32_t now, int hx, int gx, int headTop, 
 
 // The guest being drawn, held as a COPY rather than a pointer.
 //
-// Two things go wrong without this. A peer whose advert changes mid-visit
-// would morph on screen -- outfit and colours swapping on a Squachy standing
-// still, which reads as a glitch rather than as anything. And the visitor has
-// to keep being drawn through LEAVING after the peer is already gone, which a
-// pointer to a slot that has been cleared cannot do.
+// A different peer must still walk out/in rather than silently turning one
+// Squachy into another, and a peer that leaves must keep its final outfit
+// throughout the goodbye walk. But a *same-MAC* guest who changes clothes or
+// shades while visiting should update in place; Squad already reflects the
+// latest radio appearance and CLEAR must not keep the arrival snapshot.
 static SquachMesh::Peer s_hosting{};
 static uint32_t         s_hostingId = 0;
 
@@ -1537,6 +1545,11 @@ static const uint32_t MSG_SHOW_MS = 8000;
 
 static bool    s_msgGuestOn = false;      // a visitor is on screen this frame
 static int     s_msgGx = 0, s_msgHeadTop = 0;
+// The visitor's own speech bubble this frame, if he is talking: the message
+// button keeps out from under it.
+static bool    s_msgGbOn = false;
+static int     s_msgGbX = 0, s_msgGbY = 0, s_msgGbW = 0, s_msgGbH = 0;
+static float   s_msgGs = 1.0f;            // the visitor's scale this frame
 static bool    s_bubbleOn = false;        // the tap target, filled by the draw
 static int16_t s_bubX = 0, s_bubY = 0, s_bubW = 0, s_bubH = 0;
 
@@ -1714,15 +1727,206 @@ static bool    s_watchPillOn = false;
 // top band covers the clock rather than the clock cutting a hole in the
 // bubble. Returns where the WATCH pill's free span must end, or -1.
 static int16_t s_cornerClockPillR = -1;
+
+// ---- the battery gauge: a lava lamp -------------------------------------------
+// Picked from the battery lab (2026-10-10): a vaporwave lava lamp under the
+// menu icon, filled to the charge, with no box behind it -- a one-pixel
+// outline traced round its shape instead, glowing the lava's colour beside
+// the lit glass. Blobs rise and sink; on the cable they bubble faster and the
+// lamp brightens, bubbles stream up, its glowing edge beats and a rainbow
+// scrolls through the cap and base; under 10% it
+// flickers like a dying bulb; full, it twinkles.
+// The lava drifts pink -> purple -> cyan, the theme's own colours.
+//
+// The art is 11 x 19 "pixels", doubled on the 3.5in. It is built in a small
+// grid first, so the outline can be traced round whatever got drawn, and then
+// goes on the screen as runs -- about 40 fillRects a frame, not 300.
+static BatterySource s_battSrc = nullptr;
+void uiClearSetBatterySource(BatterySource fn) { s_battSrc = fn; }
+
+static float lampHash(uint32_t a, uint32_t b) {
+    uint32_t h = (a * 374761393u + b * 668265263u) ^ 0x5bd1e995u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return (float)(h ^ (h >> 16)) / 4294967295.0f;
+}
+
+// Full-strength colour at `deg` round the colour wheel, 0..359.
+static uint16_t lampRainbow(uint16_t deg) {
+    const uint8_t f = (uint8_t)((deg % 60) * 255 / 60);
+    uint8_t r, g, b;
+    switch (deg / 60) {
+        case 0:  r = 255;     g = f;       b = 0;       break;
+        case 1:  r = 255 - f; g = 255;     b = 0;       break;
+        case 2:  r = 0;       g = 255;     b = f;       break;
+        case 3:  r = 0;       g = 255 - f; b = 255;     break;
+        case 4:  r = f;       g = 0;       b = 255;     break;
+        default: r = 255;     g = 0;       b = 255 - f; break;
+    }
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
+
+// Where the lamp goes: h2 is the size of one art pixel in HALF pixels (so it
+// can be 1.5), and (ox, oy) the top left of its outline. Small screens: under
+// the menu icon. The 3.5in draws it triple size (asked for 2026-10-10), under the
+// menu icon in both orientations. Portrait's two-line speech bubble overlaps
+// the side of the glass, and that is wanted: the bubble is drawn later and
+// sits on top, like any other bubble over the background.
+// The 320-wide boards draw it double, hard against the left edge (asked for
+// 2026-10-12, on the Marauder V8); the art's outline column is x -1, so ox = s
+// puts that on pixel 0. The 240-wide screens go hard against the left edge
+// too, and the watches draw it one and a half times (both asked for
+// 2026-10-13, on the T-Watch); the 135-row sticks keep it as drawn.
+static void lampPlace(TFT_eSPI& t, int& h2, int& ox, int& oy) {
+    h2 = Theme::large() ? 6 : t.width() >= 320 ? 4 : Theme::compact() ? 2 : 3;
+    ox = 0;
+    oy = Theme::TITLE_ICON_BAND_H + 3 - h2 / 2;     // art row 0 where it always was
+}
+
+static void drawLavaLamp(TFT_eSPI& t, uint32_t now, uint8_t L, bool chg) {
+    // Art x -1..11 and y -1..19: the lamp plus a ring for its outline.
+    static const int GW = 13, GH = 21;
+    uint16_t col[GH][GW];
+    uint8_t  kind[GH][GW] = {};          // 0 nothing, 1 lamp, 2 outline
+    auto put = [&](int x, int y, uint16_t c) {
+        if (x < -1 || x > 11 || y < -1 || y > 19) return;
+        kind[y + 1][x + 1] = 1; col[y + 1][x + 1] = c;
+    };
+    auto fill = [&](int x, int y, int w, int h, uint16_t c) {
+        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) put(x + i, y + j, c);
+    };
+    // The glass widens from 5 wide under the cap to 9 at the base.
+    auto glass = [](int y, int& a, int& z) {
+        const float hw = 2.0f + (float)(y - 3) / 11.0f * 2.5f;
+        a = (int)lroundf(5.0f - hw); z = (int)lroundf(5.0f + hw);
+    };
+    const bool low = L <= 10 && !chg;
+    const int  n   = (int)lroundf(12.0f * L / 100.0f);   // rows of lava, of 12
+
+    const uint16_t metal  = Theme::PURPLE;
+    const uint16_t metalD = Theme::blend(Theme::PURPLE, TFT_BLACK, 90);
+    const float k = (sinf((float)now / 1800.0f) + 1.0f) * 0.5f;
+    const uint16_t hue = k < 0.5f
+        ? Theme::blend(Theme::VAPOR_PINK, Theme::VAPOR_PURPLE, (uint16_t)(k * 2.0f * 256.0f))
+        : Theme::blend(Theme::VAPOR_PURPLE, Theme::CYAN, (uint16_t)((k - 0.5f) * 2.0f * 256.0f));
+    uint16_t liq = hue;
+    if (low && lampHash(1, now / 90) > 0.55f) liq = Theme::blend(hue, TFT_BLACK, 179);
+    if (chg) liq = Theme::blend(hue, TFT_WHITE, (uint16_t)((0.15f + 0.15f * sinf((float)now / 150.0f)) * 256.0f));
+    const uint16_t liqEdge   = Theme::blend(liq, TFT_BLACK, 102);
+    const uint16_t emptyFill = 0x2065;   // ( 35, 12, 45)
+    const uint16_t emptyEdge = 0x51ED;   // ( 80, 60,110)
+
+    // The cap and base: purple, or on the cable a rainbow scrolling through
+    // them row by row, one lap every two seconds or so.
+    auto metalRow = [&](int y, bool dark) -> uint16_t {
+        if (!chg) return dark ? metalD : metal;
+        const uint16_t c = lampRainbow((uint16_t)((now / 6 + (uint32_t)y * 24u) % 360u));
+        return dark ? Theme::blend(c, TFT_BLACK, 90) : c;
+    };
+    fill(4, 0, 3, 1, metalRow(0, false)); fill(3, 1, 5, 1, metalRow(1, false)); fill(3, 2, 5, 1, metalRow(2, true));
+    for (int y = 3; y <= 14; y++) {
+        int a, z; glass(y, a, z);
+        const bool filled = 14 - y < n;
+        for (int x = a; x <= z; x++) {
+            const bool edge = x == a || x == z;
+            put(x, y, filled ? (edge ? liqEdge : liq) : (edge ? emptyEdge : emptyFill));
+        }
+    }
+    if (n > 1) {
+        const float sp = chg ? 2.5f : 1.0f;
+        static const float PH[3] = { 0.0f, 1.7f, 3.1f };
+        for (int i = 0; i < 3; i++) {
+            const uint16_t c = i == 1 ? Theme::CYAN : Theme::VAPOR_YELLOW;
+            const float ph = (float)now * sp / 900.0f + PH[i];
+            const int yy = 14 - (int)lroundf((sinf(ph) + 1.0f) * 0.5f * (float)(n - 1));
+            int a, z; glass(yy, a, z);
+            const int xx = (int)lroundf(5.0f + sinf(PH[i] * 3.0f + i) * (float)(z - a) / 4.0f);
+            put(xx, yy, c); put(xx + 1, yy, c);
+            const int y2 = yy + (cosf(ph) > 0.0f ? 1 : -1);
+            if (14 - y2 < n && y2 <= 14) put(xx, y2, c);
+        }
+    }
+    if (chg && n >= 2) {
+        // On the cable: a stream of bubbles racing up through the lava, so
+        // charging reads from across the room and not only side by side.
+        const uint16_t fizz = Theme::blend(hue, TFT_WHITE, 200);
+        static const uint8_t BX[3] = { 4, 6, 5 };
+        for (int i = 0; i < 3; i++) {
+            const uint32_t ph = (now + (uint32_t)i * 233u) % 700u;
+            const int yy = 14 - (int)(ph * (uint32_t)n / 700u);
+            if (yy > 14 - n) put(BX[i] + (int)((now / 140 + i) % 2), yy, fizz);
+        }
+    }
+    fill(2, 15, 7, 1, metalRow(15, true)); fill(2, 16, 7, 1, metalRow(16, false));
+    fill(2, 17, 7, 1, metalRow(17, false)); fill(1, 18, 9, 1, metalRow(18, false));
+    if (L >= 100 && (now / 300) % 2 == 0) put(5, 0, TFT_WHITE);
+
+    // The outline: every empty neighbour of the lamp. Black, except beside
+    // the lit part of the glass, where it glows the lava's colour.
+    // On the cable the glow beats, bright to dim, about once a second.
+    const uint16_t glow = chg
+        ? Theme::blend(hue, TFT_BLACK, (uint16_t)(60.0f + 110.0f * (0.5f + 0.5f * sinf((float)now / 160.0f))))
+        : Theme::blend(hue, TFT_BLACK, 154);
+    for (int gy = 0; gy < GH; gy++) for (int gx = 0; gx < GW; gx++) {
+        if (kind[gy][gx]) continue;
+        bool touch = false;
+        for (int dy = -1; dy <= 1 && !touch; dy++) for (int dx = -1; dx <= 1; dx++) {
+            const int ny = gy + dy, nx = gx + dx;
+            if (ny >= 0 && ny < GH && nx >= 0 && nx < GW && kind[ny][nx] == 1) { touch = true; break; }
+        }
+        if (!touch) continue;
+        const int y = gy - 1;
+        kind[gy][gx] = 2;
+        col[gy][gx] = (y >= 3 && y <= 14 && 14 - y < n) ? glow : TFT_BLACK;
+    }
+
+    int h2, ox, oy;
+    lampPlace(t, h2, ox, oy);
+    // Each art pixel's edges land on whole pixels, so at 1.5 the rows and
+    // columns come out 1 and 2 pixels by turns, with no gaps.
+    for (int gy = 0; gy < GH; gy++) {
+        const int y0 = oy + (gy * h2 >> 1), y1 = oy + ((gy + 1) * h2 >> 1);
+        int gx = 0;
+        while (gx < GW) {
+            if (!kind[gy][gx]) { gx++; continue; }
+            const uint16_t c = col[gy][gx];
+            int run = 1;
+            while (gx + run < GW && kind[gy][gx + run] && col[gy][gx + run] == c) run++;
+            const int x0 = ox + (gx * h2 >> 1), x1 = ox + ((gx + run) * h2 >> 1);
+            t.fillRect(x0, y0, x1 - x0, y1 - y0, c);
+            gx += run;
+        }
+    }
+}
+
+// Asks the board for its battery once a second, and draws the lamp when there
+// is a cell to show.
+static void drawBatteryGauge(TFT_eSPI& t, uint32_t now) {
+    if (!s_battSrc) return;
+    static uint32_t at = 0;
+    static bool     has = false, chg = false;
+    static uint8_t  pct = 0;
+    if (!at || now - at >= 1000) {
+        at = now ? now : 1;
+        has = s_battSrc(pct, chg);
+        if (pct > 100) pct = 100;
+    }
+    if (!has) return;
+    int h2, ox, oy;
+    lampPlace(t, h2, ox, oy);
+    if (DrawBand::has(oy, oy + (21 * h2 >> 1))) drawLavaLamp(t, now, pct, chg);
+}
+
 #if defined(TWATCH_S3)
 void twatchGpsBadge(TFT_eSPI& t);   // main.cpp: the GPS counter, top centre, while the GPS is on
-#if SQUACH_LORA
+#endif
+#if SQUACH_LORA && (defined(TWATCH_S3) || defined(TDECK_PLUS))
 void twatchLoraBadge(TFT_eSPI& t);  // main.cpp: LORA n NEW, under it, while chats are unread
 #endif
+#if defined(TWATCH_S3)
 static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     if (!Clock::trusted()) return -1;
     char tm[8];
-    Clock::formatTime(tm, sizeof tm, true);
+    Clock::formatTime(tm, sizeof tm, !Settings::clock24Hour());
     t.setTextSize(2);
     const int icons = Theme::titleBarRightIconsX(w);
     const int right = icons - (icons < w ? 2 : 4);
@@ -1733,6 +1937,30 @@ static int16_t drawCornerClock(TFT_eSPI& t, int w) {
     t.setCursor(x, 3);
     t.print(tm);
     return (int16_t)(x - 3 - 4);
+}
+#endif
+#if defined(CYD_GPS)
+// The GPS label, left of the right-hand icons in the top bar: dim while a
+// module talks with no fix, green with a fresh fix, amber for a bench fix
+// typed in on the console. Nothing until the first good sentence or a bench
+// fix, so a build with no module plugged in looks like any other. Drawn
+// straight after the background like the watch's corner clock. Returns where
+// the WATCH pill's free span must end, or -1.
+static const int GPS_LABEL_W = 22;
+static bool gpsLabelShown() { return Gnss::good() > 0 || Gnss::faked(); }
+static int16_t drawGpsLabel(TFT_eSPI& t, int w) {
+    if (!gpsLabelShown()) return -1;
+    const uint16_t col = Gnss::faked() ? Theme::AMBER
+                       : Gnss::fresh(millis()) ? Theme::GREEN
+                       : Theme::W95_SHADOW;
+    const int right = Theme::titleBarRightIconsX(w) - 2;
+    const int x = right - GPS_LABEL_W;
+    t.setTextSize(1);
+    t.fillRect(x, 0, GPS_LABEL_W, 20, TFT_BLACK);
+    t.setTextColor(col, TFT_BLACK);
+    t.setCursor(x + (GPS_LABEL_W - (t.textWidth("GPS") - 1)) / 2, 6);
+    t.print("GPS");
+    return (int16_t)(x - 4);
 }
 #endif
 static int16_t s_wpX = 0, s_wpY = 0, s_wpW = 0, s_wpH = 0;
@@ -1901,6 +2129,14 @@ void uiClearDrawCrowd(TFT_eSPI& t, uint32_t now, const Mesh::SquadMember* crowd,
     // Asked to stand bigger than the band would choose: past the size he
     // stands at alone, but never taller than the band, and never so wide
     // they stand in each other rather than beside each other.
+#ifndef ARDUINO
+    // Emulator only, beside SQUACHSIM_CROWDFIT: SQUACHSIM_CROWDK=k scales the
+    // crowd by k (either way), under the same two caps as `grow`.
+    if (const char* kk = getenv("SQUACHSIM_CROWDK")) {
+        const float k = (float)atof(kk);
+        if (k > 0.0f) s = fminf(s * k, fminf(bandH / 74.0f, 1.3f * cw / 56.0f));
+    }
+#endif
     if (grow > 1.0f) {
         s = fminf(s * grow, fminf(bandH / 74.0f, 1.3f * cw / 56.0f));
     }
@@ -2193,10 +2429,25 @@ static void drawMessageUi(TFT_eSPI& t, uint32_t now, int titleBottom, int squach
     // Only with somebody around -- or something unread from somebody who was.
     if (s_msgGuestOn || (m.unread && !tut)) {
         int ix = gx + 26;
+        // Beside his head rather than on it on the big panels, where he is
+        // twice the size the 26 was measured against and it sat on his
+        // sunglasses. The other boards keep their 26 exactly.
+        if (Theme::large() && s_msgGuestOn) {
+            const int beside = (int)(29.0f * s_msgGs);
+            if (beside > 26) ix = gx + beside;
+        }
         if (ix + MSG_ICON_W > w - 4) ix = w - 4 - MSG_ICON_W;
         // Dropped clear of the red bubble while one is up: at the larger
         // size the two overlapped at the corner and, both red, read as one.
-        drawMessageIcon(t, ix, head + 4 + (showing ? 8 : 0),
+        int iy = head + 4 + (showing ? 8 : 0);
+        // And clear of his own speech bubble. On the 3.5" his lines wrap to
+        // two or three double-size rows that hang down past his head, right
+        // through where the button sits (2026-10-12): drop it under them.
+        if (s_msgGuestOn && s_msgGbOn &&
+            ix < s_msgGbX + s_msgGbW && ix + MSG_ICON_W > s_msgGbX &&
+            iy < s_msgGbY + s_msgGbH + 2 && iy + MSG_ICON_H + 6 > s_msgGbY)
+            iy = s_msgGbY + s_msgGbH + 4;
+        drawMessageIcon(t, ix, iy,
                         tut ? showing : m.unread, tut ? false : MeshTalk::sending(now), now);
     }
 }
@@ -2300,9 +2551,10 @@ static void visitTick(uint32_t now) {
         if (!id) return;
         const SquachMesh::Peer* g = rawGuest(now);
         if (!g) return;
-        s_hosting   = *g;                   // copied once, on arrival
+        s_hosting   = *g;                   // copy on arrival; live same-peer edits refresh below
         s_hostingId = id;
         s_vp = VisitPhase::ARRIVING; s_vpAt = now;
+        Sound::play(Sound::Id::VISITOR);
         s_guestTurn = true;                 // so the HOST speaks first
         s_hangStep  = 0;                    // and asks the first question
         s_guestLaughUntil = 0;              // no laughter carried in from
@@ -2335,6 +2587,14 @@ static void visitTick(uint32_t now) {
         s_vpAt = now + s_beatMs;            // goodbye first, then the walk
         return;
     }
+    // Same guest, same identity: follow their newest appearance without
+    // resetting the visit's phase, high-five, conversation, or emote state.
+    // The radio's Mesh::peer() is refreshed on every presence advertisement;
+    // SQUAD already draws that current data. This updates our hosted COPY
+    // only while the identical visitor is still here, never during LEAVING.
+    if (id && id == s_hostingId && s_vp != VisitPhase::LEAVING)
+        MeshVisitAppearance::refresh(s_hosting, s_hostingId, id, rawGuest(now), false);
+
     // An emote INTERRUPTS. Somebody pressed a button and is watching for it;
     // the set pieces and the naps start themselves, unprompted, and can wait.
     //
@@ -2445,6 +2705,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
     // lesson, and a real peer turning up must not walk onto the stage.
     if (const SquachMesh::Peer* d = MeshTutor::guest()) return d;
     if (s_guest) return s_guest;          // the emulator's --peer, when set
+    if (Settings::meshCrowd() == 0) return nullptr;   // CROWD NONE: nobody visits
     if (const SquachMesh::Peer* p = Mesh::peer()) { s_realSeenAt = now; return p; }
 #if SQUACH_MESH_DEMO
     // The synthetic visitor is a FALLBACK, not the feature: it fills an empty
@@ -2462,6 +2723,7 @@ static const SquachMesh::Peer* rawGuest(uint32_t now) {
 static uint32_t rawGuestId(uint32_t now) {
     if (MeshTutor::guest()) return 0x7070u;
     if (s_guest) return 0x5111u;
+    if (Settings::meshCrowd() == 0) return 0;
     if (Mesh::peer()) {
         const uint8_t* m = Mesh::peerMac();
         uint32_t h = 2166136261u;                  // FNV-1a, plenty for six bytes
@@ -2482,6 +2744,97 @@ static uint32_t rawGuestId(uint32_t now) {
 #include "settings.h"
 #include "idle_events.h"
 #include <Arduino.h>
+
+// The pets at double size on the large panels. They are drawn, unchanged,
+// into a layer half the screen's width and height (Pet::setZoom says which
+// world they are in), and every pixel they drew is laid onto the screen as
+// a 2x2 block. 38 KB at 480x320, in PSRAM: only boards that have it, so the
+// 3.5" CYDs without PSRAM keep their pets at the old size.
+static TFT_eSprite* s_petLayer = nullptr;
+// The see-through colour: a dark pure green that no pet, balloon or chain is
+// drawn in (every colour in their code checked, 2026-10-09). It was 0x2125
+// first -- which is C1iPPY's outline, so he came out with none.
+static const uint16_t PET_KEY16 = 0x06C0;
+
+static bool petLayerFor(TFT_eSPI& t, int w, int h) {
+    if (!Theme::large()) return false;
+#if defined(ESP_PLATFORM)
+    if (!psramFound()) return false;
+#endif
+    const int lw = w / 2, lh = h / 2;
+    if (s_petLayer && (s_petLayer->width() != lw || s_petLayer->height() != lh)) {
+        s_petLayer->deleteSprite();
+        delete s_petLayer;
+        s_petLayer = nullptr;
+    }
+    if (!s_petLayer) {
+        s_petLayer = new TFT_eSprite(&t);
+        s_petLayer->setColorDepth(8);
+#if defined(ESP_PLATFORM)
+        s_petLayer->setAttribute(PSRAM_ENABLE, true);
+#endif
+        if (!s_petLayer->createSprite(lw, lh)) {
+            delete s_petLayer;
+            s_petLayer = nullptr;
+            return false;
+        }
+    }
+    return true;
+}
+
+static void drawPets(TFT_eSPI& t, uint32_t now, int w, int h, int bandTop, int petFloor) {
+#if SQUACH_MESH
+    Pet::setCrowd(s_crowdDrawn);
+#endif
+    if (!Pet::anyOut(now) || !petLayerFor(t, w, h)) {
+        Pet::setZoom(1);
+        Pet::tick(t, now, w, bandTop, petFloor);
+        return;
+    }
+    Pet::setZoom(2);
+    TFT_eSprite& L = *s_petLayer;
+    L.fillRect(0, 0, L.width(), L.height(), PET_KEY16);   // fillSprite, which the emulator lacks
+#if defined(ESP_PLATFORM)
+    // The key as the layer stores it, whatever 8 bits the 16 came down to.
+    const uint8_t PET_KEY8 = L.getPointer() ? ((const uint8_t*)L.getPointer())[0] : 0;
+#endif
+    // ...and as the layer reads it back, which is not always the 16 bits
+    // that went in: the sprite stores fewer, and gives back what it kept.
+    const uint16_t petKey = L.readPixel(0, 0);
+    Pet::tick(L, now, w / 2, bandTop / 2, petFloor / 2);
+    const int lw = L.width(), lh = L.height();
+#if defined(ESP_PLATFORM)
+    // The layer's own bytes on a board: 38,400 of them, a run at a time.
+    const uint8_t* buf = (const uint8_t*)L.getPointer();
+    if (buf && L.getColorDepth() == 8) {
+        for (int y = 0; y < lh; y++) {
+            const uint8_t* row = buf + (size_t)y * lw;
+            int x = 0;
+            while (x < lw) {
+                const uint8_t c = row[x];
+                int e = x + 1;
+                while (e < lw && row[e] == c) e++;
+                if (c != PET_KEY8) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, L.color8to16(c));
+                x = e;
+            }
+        }
+        Pet::drawHeldBalloons(t);
+        return;
+    }
+#endif
+    // The emulator's sprites keep 16 bits a pixel: read them back instead.
+    for (int y = 0; y < lh; y++) {
+        int x = 0;
+        while (x < lw) {
+            const uint16_t c = L.readPixel(x, y);
+            int e = x + 1;
+            while (e < lw && L.readPixel(e, y) == c) e++;
+            if (c != petKey) t.fillRect(x * 2, y * 2, (e - x) * 2, 2, c);
+            x = e;
+        }
+    }
+    Pet::drawHeldBalloons(t);
+}
 
 void uiClearInit(TFT_eSPI& t) {
     // fillScreen() relies on TFT_eSPI's base-class width/height, which
@@ -2570,7 +2923,7 @@ static uint16_t counterCount(const DetectionEngine& eng, DetectionType t) {
 static const int XP_ICON_W = 9;     // the icon and the gap after it
 static const int XP_ADV    = 7;     // per letter: 5 wide, 1 bolder, 1 gap
 static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
-                       uint16_t iconCol, uint8_t state, int pad) {
+                       uint16_t iconCol, uint8_t state, int pad, int k = 1) {
     // Top and bottom of the gradient, then the edge, per state.
     // The blue is the channel's #0099FF at the bottom, lighter up top.
     static const uint16_t TOP[3]  = { 0x661F /* #66C2FF */, 0xFD8A /* #FFB050 */, 0x8C77 /* #8C8EB8 */ };
@@ -2587,24 +2940,37 @@ static void drawXpTile(TFT_eSPI& t, int x, int y, int w, int h, const char* txt,
         const int inset = (r == 1 || r == h - 2) ? 1 : 0;
         t.drawFastHLine(x + 1 + inset, y + r, w - 2 - 2 * inset, c);
     }
-    t.drawRoundRect(x, y, w, h, 3, EDGE[state]);
+    t.drawRoundRect(x, y, w, h, 3 * k, EDGE[state]);
     // The tray icon: the device's colour in a little bevelled square.
-    const int ix = x + pad, iy = y + (h - 6) / 2;
-    t.fillRect(ix, iy, 6, 6, state == 2 ? Theme::blend(iconCol, 0x8410, 160) : iconCol);
-    t.drawFastHLine(ix, iy, 6, 0xFFFF);
-    t.drawFastVLine(ix, iy, 6, 0xFFFF);
-    t.drawFastHLine(ix, iy + 5, 6, EDGE[state]);
-    t.drawFastVLine(ix + 5, iy, 6, EDGE[state]);
+    const int is = 6 * k;
+    const int ix = x + pad, iy = y + (h - is) / 2;
+    t.fillRect(ix, iy, is, is, state == 2 ? Theme::blend(iconCol, 0x8410, 160) : iconCol);
+    t.drawFastHLine(ix, iy, is, 0xFFFF);
+    t.drawFastVLine(ix, iy, is, 0xFFFF);
+    t.drawFastHLine(ix, iy + is - 1, is, EDGE[state]);
+    t.drawFastVLine(ix + is - 1, iy, is, EDGE[state]);
     // Tahoma Bold, near enough: each letter twice, a pixel apart. One
     // letter at a time on a 7-pixel advance: the font's own 6 leaves no gap
     // once the letters are a pixel wider, and they ran together (2026-10-05).
-    const int ty = y + (h - 8) / 2;
-    int tx = ix + XP_ICON_W;
+    // k: 2 on the large panels, the whole tile drawn at double size.
+    const int ty = y + (h - 8 * k) / 2;
+    int tx = ix + XP_ICON_W * k;
     t.setTextColor(INK[state]);
-    for (const char* c = txt; *c; c++, tx += XP_ADV) {
+    t.setTextSize(k);
+    for (const char* c = txt; *c; c++, tx += XP_ADV * k) {
         t.setCursor(tx, ty);         t.write(*c);
         t.setCursor(tx + 1, ty);     t.write(*c);
     }
+    t.setTextSize(1);
+}
+
+// The FONTS page's preview: one tile, lit, at the scale the main screen
+// draws them. Returns its width.
+int uiClearSampleTile(TFT_eSPI& t, int x, int y, const char* txt, uint16_t iconCol) {
+    const int k = Theme::xpTileScale();
+    const int w = ((int)strlen(txt) * XP_ADV + 10 + XP_ICON_W) * k;
+    drawXpTile(t, x, y, w, 12 * k, txt, iconCol, 0, 5 * k, k);
+    return w;
 }
 
 // CLASSIC's counters: one plain line of LABEL:COUNT pairs.
@@ -2697,18 +3063,83 @@ static const uint8_t COUNTER_ROWS_PORTRAIT  =
 // right, the high five, the conversation and the set pieces. Drawn into the
 // band from `titleBottom` to `squachyBottom`, which is the main screen's
 // Squachy band there and the room under the clock on the desk.
+// ---- the 3.5" boards ------------------------------------------------------------
+// Standing up, the 3.5" has a tall band and he filled little of it. These are
+// the sizes picked for it on two slider pages (2026-10-10), as multiples of
+// what he was. Portrait: SMALL 1.5, MEDIUM 1.4, LARGE 1.3 on his own, as big
+// as fits with a visitor (below), a crowd of three 1.1, of four or five 1.2.
+// Landscape: alone as he was, 1.2 with a visitor and in a crowd of up to
+// five. Every 480x320 board; every smaller panel is as it was.
+static bool tallBig(TFT_eSPI& t) { return Theme::large() && t.height() > t.width(); }
+static bool wideBig(TFT_eSPI& t) { return Theme::large() && t.width() > t.height(); }
+static float soloBoost(TFT_eSPI& t, uint8_t sizePct) {
+    if (!tallBig(t)) return 1.0f;
+    return sizePct <= 70 ? 1.5f : sizePct <= 85 ? 1.4f : 1.3f;
+}
+// With a visitor: as big as fits once they stand closer -- each may take 60%
+// of the width, so arms overlap in the middle -- which is past the 1.5 the
+// slider stopped at with half each (asked for bigger still, 2026-10-10).
+// The 320x240 boards -- the 2.4", 2.8" and 3.2" CYDs and the 2.8" Freenove,
+// one picture for all of them -- picked on a third page: with a visitor 1.2
+// in landscape (portrait already overlaps them), crowds of three 1.1, four or
+// five 1.2, six to eight 1.2 in landscape and 1.1 in portrait. Exactly those
+// two shapes: the watch and the StickS3 panels get pages of their own.
+static bool qvga(TFT_eSPI& t) {
+    return (t.width() == 320 && t.height() == 240) || (t.width() == 240 && t.height() == 320);
+}
+static float visitBoost(TFT_eSPI& t) {
+    if (tallBig(t)) return 2.0f;
+    if (wideBig(t)) return 1.2f;
+    if (qvga(t) && t.width() > t.height()) return 1.2f;
+    return 1.0f;
+}
+static const float VISIT_SHARE = 0.6f;
+static float crowdGrow(TFT_eSPI& t, uint8_t bodies) {
+    if (tallBig(t)) return bodies <= 3 ? 1.1f : bodies <= 5 ? 1.2f : 1.0f;
+    if (wideBig(t)) return bodies <= 5 ? 1.2f : 1.0f;
+    if (qvga(t)) {
+        if (bodies <= 3) return 1.1f;
+        if (bodies <= 5) return 1.2f;
+        return t.width() > t.height() ? 1.2f : 1.1f;
+    }
+    // The T-Watch's 240x240, picked on its own page: 1.2 up to five, 1.1 past.
+    if (t.width() == 240 && t.height() == 240) return bodies <= 5 ? 1.2f : 1.1f;
+    return 1.0f;
+}
+
 static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                       int titleBottom, int squachyBottom, bool advance, bool msgFresh) {
     const int w = t.width();
     const int SMALL_PCT = 70;
-    const int gap  = w / 4;
+    const float share = tallBig(t) ? VISIT_SHARE : 0.5f;
+    // On the 3.5" in portrait the two of them stand in the middle of the
+    // band rather than on its floor: at the size they reach there -- their
+    // share of the width each, 74 rows of body per unit of scale -- the floor left
+    // most of the screen above them empty. The whole band moves up rather
+    // than shrinking, so they keep the size it gives them; everything below
+    // works from squachyBottom, so the pair, the slap and the bubbles follow.
+    int lift = 0;
+    if (tallBig(t)) {
+        const int pair = (int)(74.0f * ((float)w * share - 8.0f) / 56.0f);
+        const int band = squachyBottom - titleBottom;
+        if (band > pair) lift = (band - pair) / 2;
+    }
+    const int bandH = squachyBottom - titleBottom;
+    titleBottom   -= lift;
+    squachyBottom -= lift;
+    // Closer together there, so the bigger pair still stands on the screen.
+    const int gap  = tallBig(t) ? (int)((float)w * 0.21f) : w / 4;
     const int homeX = w / 2 + gap;     // where the guest stands
     const int offX  = w + 40;          // off the right edge
 
     Squachy::setCompany(true);
+    Squachy::setCompanyShare(share);
+    Squachy::setSizeBoost(visitBoost(t));
     Squachy::tick(t, w / 2 - gap + hostLeanPx(), titleBottom,
-                  squachyBottom - titleBottom,
+                  bandH,
                   now, advance, 1.0f, false, 0, SMALL_PCT);
+    Squachy::setSizeBoost(1.0f);
+    Squachy::setCompanyShare(0.5f);
     Squachy::setCompany(false);
 
     // The visitor is drawn, not ticked: tick() owns mood, quip timers
@@ -2760,8 +3191,11 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         // Just above his own head, not the boot
                         // splash's 34 -- that lands in the host's
                         // bubble row and the two paint over each
-                        // other. Higher by a hat, when he has one.
-                        20 + scriptHatPx(gs),
+                        // other. Higher by a hat, when he has one. On
+                        // the 3.5" in portrait, clear of both heads: its
+                        // two size-2 lines would otherwise cover the
+                        // host's face beside him.
+                        (tallBig(t) ? 78 : 20) + scriptHatPx(gs),
                         // Cracking up at whatever the host just said.
                         // The host gets the same thing through his
                         // mood machine; this cameo has none.
@@ -2772,6 +3206,7 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
                         // And his bubble says so.
                         true,
                         guestPose(now));
+    s_msgGbOn = Squachy::cameoBubble(s_msgGbX, s_msgGbY, s_msgGbW, s_msgGbH);
     Squachy::setNameTag(nullptr);
     Squachy::setHeadset(false);
     Squachy::setAuraPreview(-1);
@@ -2793,11 +3228,16 @@ static void drawVisit(TFT_eSPI& t, uint32_t now, const SquachMesh::Peer* guest,
     }
     drawPieceFx(t, now, w / 2 - gap + hostLeanPx(), gx,
                 squachyBottom - (int)(58.0f * gs), gs);
+    // Our Squachy's words once more, on top: tick() drew them before the
+    // visitor existed in this frame, and a visitor walking in, leaning in or
+    // standing close on a big panel stood right over them.
+    Squachy::redrawOwnBubble(t, now);
 
     // Where he is this frame, for the message bubble and its button.
     s_msgGuestOn = true;
     s_msgGx      = gx;
     s_msgHeadTop = squachyBottom - (int)(58.0f * gs);
+    s_msgGs      = gs;
 }
 
 void uiClearVisitTick(uint32_t now) {
@@ -2922,19 +3362,47 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     // WATCHING / HUNTING pill is up -- that lives in the same middle of the
     // bar, so they drop under it, and Squachy gives up those rows while it
     // is set -- and never on the T-Watch, whose clock and badges are there.
+    // The T-Deck's LORA pill lives in that middle too, whenever the radio is
+    // on, so the tiles sit under it then (asked for 2026-10-13, always-on
+    // 2026-10-15).
 #if defined(TWATCH_S3)
     const bool tilesLow = true;
 #else
     const bool tilesLow = eng.watchKind() != DetectionEngine::WatchKind::NONE ||
-                          eng.huntKind()  != DetectionEngine::WatchKind::NONE;
+                          eng.huntKind()  != DetectionEngine::WatchKind::NONE
+#if SQUACH_LORA && defined(TDECK_PLUS)
+                          || Settings::loraListen() != 0   // the LORA pill is up whenever the radio is on (2026-10-15)
+#endif
+                          ;
 #endif
     const int tilesTop      = tilesLow ? titleBottom + 2 : 2;
     // The 135-pixel boards may borrow a third row on a crowded day (see the
     // fit below); Squachy gives up that row's height only while it is used.
     static uint8_t s_tileRowsLast = 0;      // rows the tiles took last frame
-    const uint8_t extraRows = Theme::compact() ? 1 : 0;
-    const uint8_t rowsKept  = (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
-    const int bandTop       = xp ? tilesTop + rowsKept * lineH : titleBottom;
+    // ...or rather they did: their names took three rows of a 135-row screen
+    // and left Squachy a sliver under his own bubble. There the tiles are
+    // the colour and the count alone, in ONE row (asked for 2026-10-10);
+    // selecting one still opens what it counts, which is where the name is.
+    const bool miniTiles    = Theme::compact();
+    // The tiles' own row height: twice the counters' on the large panels,
+    // where every tile is drawn at double size (drawXpTile's k).
+    // FONTS > XP TILES moves it between the two (Theme::xpTileScale()). Made
+    // BIGGER than the panel draws them, they may take one more row; a day
+    // too crowded for even that draws them at the panel's own size until
+    // there are fewer kinds again (the fit below sets s_bigTilesFrom).
+    static uint8_t s_bigTilesFrom = 0;      // kinds that did not fit big; 0 = none yet
+    static int     s_bigTilesW = 0;         // ...on a panel this wide
+    static uint8_t s_tileKindsLast = 0;     // kinds the tiles showed last frame
+    const int tileNative    = Theme::large() ? 2 : 1;
+    if (s_bigTilesW != w) { s_bigTilesFrom = 0; s_bigTilesW = w; }
+    int tileWant            = Theme::xpTileScale();
+    if (tileWant > tileNative && s_bigTilesFrom && s_tileKindsLast >= s_bigTilesFrom) tileWant = tileNative;
+    const int tileK         = tileWant;
+    const uint8_t extraRows = (!miniTiles && tileK > tileNative) ? 1 : 0;
+    const uint8_t rowsKept  = miniTiles ? 1
+                            : (extraRows && s_tileRowsLast > counterRows) ? s_tileRowsLast : counterRows;
+    const int tileLineH     = lineH * tileK;
+    const int bandTop       = xp ? tilesTop + rowsKept * tileLineH : titleBottom;
     const int squachyBottom = xp ? bar.y - 1 : counterTextTop - 2;
     // A panel far taller than it is wide -- the phone app's emulator, shaped
     // like the phone; no board is -- would hand him a band twice his usual
@@ -2978,6 +3446,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     Theme::drawActiveBackground(t, now, 0, h, eng, advance);
     Theme::clearBackgroundFloor();
     FrameProf::lap(FrameProf::BG);
+    // The battery lamp, under everything that moves for the same reason as
+    // the corner clock: a speech bubble that reaches up there covers it.
+    drawBatteryGauge(t, now);
 #if defined(TWATCH_S3)
     // Under everything that moves: see drawCornerClock().
     if (DrawBand::has(0, titleBottom)) s_cornerClockPillR = drawCornerClock(t, w);
@@ -2986,14 +3457,23 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     twatchLoraBadge(t);
 #endif
 #endif
+#if defined(CYD_GPS)
+    if (DrawBand::has(0, titleBottom)) s_cornerClockPillR = drawGpsLabel(t, w);
+#endif
+#if SQUACH_LORA && defined(TDECK_PLUS)
+    twatchLoraBadge(t);   // LORA n NEW, under the GPS label, under the bubbles
+#endif
     // Everything from here that moves by the call, not by the clock, moves
     // on the mascot's clock. See uiMascotStep().
     const bool step = uiMascotStep(now, advance);
     // His bubble rises past the tiles to row 1, where it always sat. Undone
     // straight after he is drawn: the desk and the alert cameo want theirs.
-    // XP: his bubble rises to just under last frame's tiles, or to the top
-    // row when there are none -- not onto them.
-    if (xp) Squachy::setBubbleRiseTo(s_tileRowsLast ? tilesTop + s_tileRowsLast * lineH + 1 : 1);
+    // XP: his bubble -- and a visitor's -- rises to just under last frame's
+    // tiles, or to the top row when there are none: never onto them, on any
+    // panel (asked for 2026-10-13; the large panels used to rise over the
+    // tiles and hide the ones underneath). The pets' balloons keep under the
+    // same edge (Pet::tick's band top).
+    if (xp) Squachy::setBubbleRiseTo(s_tileRowsLast ? tilesTop + s_tileRowsLast * tileLineH + 1 : 1);
 
     // Squachy: main character, reacts to events, cracks jokes when idle.
     // His available region runs all the way to countersTop (not
@@ -3041,9 +3521,9 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         // reading order and it means the resident does not appear to move
         // aside for a stranger.
         visitTick(now);
-        // The hosted COPY, not whoever the radio is hearing right now. That
-        // is what keeps a visitor from morphing mid-visit and what lets him
-        // still be drawn while he walks out after the peer has gone.
+        // The hosted COPY, refreshed for the *same* visitor's outfit/shades/
+        // name changes but never swapped for a different MAC mid-visit.
+        // It stays intact through LEAVING even after radio presence is lost.
         const SquachMesh::Peer* guest = visitHosting();
         // A message in the air replaces his scripted line and his nameplate
         // while it is up -- it carries the sender's name itself, in red.
@@ -3072,7 +3552,8 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         const uint8_t peerCap = (uint8_t)((crowdMax > 8 ? 8 : crowdMax) - 1);
         if (crowdMax > 1) crowdN = Mesh::squadList(now, crowd, peerCap);
         if (crowdMax > 1 && crowdN >= 2) {
-            uiClearDrawCrowd(t, now, crowd, crowdN, sqTop, squachyBottom, step, msgFresh, 22);
+            uiClearDrawCrowd(t, now, crowd, crowdN, sqTop, squachyBottom, step, msgFresh, 22,
+                             crowdGrow(t, (uint8_t)(crowdN + 1)));
         } else if (guest) {
             drawVisit(t, now, guest, sqTop, squachyBottom, step, msgFresh);
         } else
@@ -3080,8 +3561,12 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         // His band runs a few rows INTO the bar: the bottom of it is where
         // his shadow goes, under his feet, and the bar paints over that --
         // so his soles, not his shadow, land on the bar's top line.
-        Squachy::tick(t, w / 2, sqTop, sqFeet + SQ_FOOT_SINK - sqTop, now, step,
-                      1.0f, false, -1, Settings::squachySizePct());
+        {
+            Squachy::setSizeBoost(soloBoost(t, Settings::squachySizePct()));
+            Squachy::tick(t, w / 2, sqTop, sqFeet + SQ_FOOT_SINK - sqTop, now, step,
+                          1.0f, false, -1, Settings::squachySizePct());
+            Squachy::setSizeBoost(1.0f);
+        }
         Squachy::setBubbleRiseTo(-1);
 #if SQUACH_MESH
         // Everybody in range, whether or not one of them is on screen.
@@ -3365,29 +3850,34 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
         uint16_t tileW[MAX_COUNTER_TYPES];
         char     tileTxt[MAX_COUNTER_TYPES][14];
         for (uint8_t i = 0; i < counterN; i++) {
-            snprintf(tileTxt[i], sizeof(tileTxt[i]), "%s %u", counterLabel(counterTypes[i]),
-                     counterCount(eng, counterTypes[i]));
-            tileW[i] = (uint16_t)((int)strlen(tileTxt[i]) * XP_ADV + 10 + XP_ICON_W);
+            if (miniTiles) snprintf(tileTxt[i], sizeof(tileTxt[i]), "%u", counterCount(eng, counterTypes[i]));
+            else           snprintf(tileTxt[i], sizeof(tileTxt[i]), "%s %u", counterLabel(counterTypes[i]),
+                                    counterCount(eng, counterTypes[i]));
+            tileW[i] = (uint16_t)(((int)strlen(tileTxt[i]) * XP_ADV + 10 + XP_ICON_W) * tileK);
         }
-        int tileGap = 4, tilePad = 5;
+        int tileGap = 4 * tileK, tilePad = 5 * tileK;
         uint8_t rowsUsed = 0;
         // A row that reaches into the title bar's icon band keeps between the
         // corner icons: the menu on the left, rotate (and the lock, when the
         // PIN is on) on the right. Centred, so the same margin both sides.
         const int iconMargin = (Theme::TITLE_ICON_W + (Security::enabled() ? 26 : 0) > Theme::TITLE_ICON_W
                                     ? Theme::TITLE_ICON_W + (Security::enabled() ? 26 : 0)
-                                    : Theme::TITLE_ICON_W) + 3;
+                                    : Theme::TITLE_ICON_W) + 3
+#if defined(CYD_GPS)
+                               + (gpsLabelShown() ? GPS_LABEL_W + 2 : 0)   // the GPS label, left of the icons
+#endif
+                               ;
         auto rowRoom = [&](uint8_t row) {
-            const int top = tilesTop + row * lineH;
+            const int top = tilesTop + row * tileLineH;
             return top < Theme::TITLE_ICON_BAND_H ? w - 2 * iconMargin : w - 8;
         };
         // Tighter tiles, once, if a crowded day will not fit the rows there are.
         for (uint8_t pass = 0; pass < 2 && counterN && !rowsUsed; pass++) {
         if (pass == 1) {
-            tileGap = 2; tilePad = 2;
-            for (uint8_t i = 0; i < counterN; i++) tileW[i] -= 6;
+            tileGap = 2 * tileK; tilePad = 2 * tileK;
+            for (uint8_t i = 0; i < counterN; i++) tileW[i] -= 6 * tileK;
         }
-        for (uint8_t r = 1; r <= counterRows + extraRows; r++) {
+        for (uint8_t r = 1; r <= (miniTiles ? 1 : counterRows + extraRows); r++) {
             const uint8_t bse = counterN / r, rem = counterN % r;
             bool fits = true;
             uint8_t st = 0;
@@ -3401,6 +3891,31 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
             if (fits) { rowsUsed = r; break; }
         }
         }
+        // One row of mini tiles that still will not fit: as many as do, the
+        // last of them saying how many more there are.
+        if (miniTiles && counterN && !rowsUsed) {
+            rowsUsed = 1;
+            uint8_t keep = counterN;
+            while (keep > 1) {
+                char more[8];
+                snprintf(more, sizeof more, "+%u", (unsigned)(counterN - keep + 1));
+                const int moreW = (int)strlen(more) * XP_ADV + 10 + XP_ICON_W - 6;
+                int rw = moreW;
+                for (uint8_t k = 0; k + 1 < keep; k++) rw += tileW[k] + tileGap;
+                if (rw <= rowRoom(0)) {
+                    snprintf(tileTxt[keep - 1], sizeof tileTxt[keep - 1], "%s", more);
+                    tileW[keep - 1] = (uint16_t)moreW;
+                    break;
+                }
+                keep--;
+            }
+            counterN = keep;
+        }
+        // Bigger than the panel's own and still no fit: back to its own size
+        // from the next frame, for as long as there are this many kinds.
+        if (counterN && !rowsUsed && tileK > tileNative) s_bigTilesFrom = counterN;
+        else if (s_bigTilesFrom && counterN < s_bigTilesFrom) s_bigTilesFrom = 0;
+        s_tileKindsLast = counterN;
         if (counterN && !rowsUsed) rowsUsed = counterRows + extraRows;
         s_tileRowsLast = rowsUsed;
         // A kind that has just turned up flashes orange for a few seconds, the
@@ -3422,18 +3937,18 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
             uint8_t st = 0;
             for (uint8_t row = 0; row < rowsUsed; row++) {
                 const uint8_t n = bse + (row < rem ? 1 : 0);
-                const int rowY = tilesTop + 2 + row * lineH;
+                const int rowY = tilesTop + 2 + row * tileLineH;
                 int rw = 0;
                 for (uint8_t k = 0; k < n; k++) rw += tileW[st + k] + (k ? tileGap : 0);
                 int x = (w - rw) / 2;
-                const bool paint = DrawBand::has(rowY - 2, rowY + lineH);
+                const bool paint = DrawBand::has(rowY - 2, rowY + tileLineH);
                 for (uint8_t k = 0; k < n; k++) {
                     const uint8_t i = st + k;
                     const DetectionType ty = counterTypes[i];
                     bool lit = false;
                     for (uint8_t d = 0; d < (uint8_t)DetectionType::COUNT && d < 32; d++)
                         if ((s_litMask & (1u << d)) && uiClearColumnHolds(ty, (DetectionType)d)) { lit = true; break; }
-                    const int ty0 = rowY - 2, th = 12;
+                    const int ty0 = rowY - 2, th = 12 * tileK;
                     // A tile under his speech bubble waits for it to go: the
                     // bubble is the one that has something to say right now.
                     const bool underBubble = bub && x < bX + bW && x + tileW[i] > bX && ty0 < bY + bH && ty0 + th > bY;
@@ -3442,8 +3957,10 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
                         // own ignored or snoozed things are a greyed-out slate.
                         const uint32_t since = s_tileSince[(uint8_t)ty];
                         const bool flash = lit && since && now - since < 3000 && ((now - since) / 500) % 2 == 0;
-                        drawXpTile(t, x, ty0, tileW[i], th, tileTxt[i], Theme::colorFor(ty),
-                                   flash ? 1 : (lit ? 0 : 2), tilePad);
+                        // The "+N" tile stands for several kinds: grey, not one of their colours.
+                        drawXpTile(t, x, ty0, tileW[i], th, tileTxt[i],
+                                   (miniTiles && tileTxt[i][0] == '+') ? (uint16_t)0x8410 : Theme::colorFor(ty),
+                                   flash ? 1 : (lit ? 0 : 2), tilePad, tileK);
                     }
                     if (s_tileN < TILE_MAX) s_tiles[s_tileN++] = { (int16_t)x, (int16_t)ty0, (int16_t)tileW[i], (int16_t)th, ty };
                     x += tileW[i] + tileGap;
@@ -3454,7 +3971,8 @@ void uiClearTick(TFT_eSPI& t, uint32_t now, const DetectionEngine& eng, bool adv
     }
 
     // The pet, last of the scene: over the counters, under the buttons.
-    if (!Settings::boringMode()) Pet::tick(t, now, w, bandTop, petFloor);
+    Pet::setGround(sqFeet);
+    if (!Settings::boringMode()) drawPets(t, now, w, h, bandTop, petFloor);
 
     // Soft buttons, straight over the background: it repaints the whole
     // strip under them every frame, margins and gaps included. Each

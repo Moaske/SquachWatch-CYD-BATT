@@ -23,6 +23,14 @@ namespace {
 
 #if (defined(SQW_S3) && !defined(SQW_FLASH_8MB)) || defined(CROWPANEL7)   // an 8 MB S3 takes the CYDs' table and address
 const uint32_t BASE    = 0x810000;   // the gap after app1; partitions_twatch.csv (both SQW_S3 boards) and partitions_crowpanel7.csv, the same 16 MB shape
+// The two C5 boards have tables of their own, and the CYDs' 0x3D0000 sits
+// inside an app slot on both (app0 on the NM-CYD-C5's, app1 on the Marauder
+// V8's): regionFree() saw it and kept the black box off, so neither board
+// had one (found drawing the partition tables, 2026-10-12).
+#elif defined(MARAUDER_V8)
+const uint32_t BASE    = 0x710000;   // the gap after app1; see partitions_ota_8mb.csv
+#elif defined(NM_CYD_C5) || defined(TAB5)
+const uint32_t BASE    = 0xC20000;   // the free space after coredump; see partitions_ota_16mb.csv (the Tab5 takes the same table)
 #else
 const uint32_t BASE    = 0x3D0000;   // the gap after app1; see partitions_ota.csv
 #endif

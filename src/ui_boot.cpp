@@ -23,7 +23,6 @@ static const char* BOOT_LINES[] = {
     "Big Brother's ugly cousin, actually.",
     "I collect MAC addresses, not friends.",
     "They see everything. I see them too.",
-    "Cryptid by trade, snitch by hobby.",
     "Somewhere, a camera just got nervous.",
     "Not paranoid. Just well-informed.",
     "Trust no lens.",
@@ -211,13 +210,40 @@ void uiBootTick(TFT_eSPI& t, uint32_t now) {
         // where the constant was chosen against a render, and it still holds
         // there.
         float bootScale = 1.95f;
-        if (w >= 400) {
+        int   gap = 34;                                   // drawWaving's own: one 14-row line
+        // On the big panels his line is set at the 2.8"'s size rather than
+        // double: one short line instead of two or three big ones, so the
+        // room goes to him (asked for on the 3.5", 2026-10-12).
+        Squachy::setBubbleSmall(true);
+        if (Theme::large()) {
+            // The big panels draw his bubble at double size, and a line like
+            // "Surveillance state? Not on my watch." wraps to two or three of
+            // those -- 40 to 60 rows, in a gap sized for one 14-row line, so
+            // the bubble came down over his face (the 3.5", 2026-10-12). The
+            // gap is the bubble he is actually about to say, measured, and
+            // he is sized into whatever band that leaves.
+            // His head anchor is baseY - 58 units, but his hair rises about
+            // ten more above it, so he is 68 units tall for this, and the
+            // bubble sits that hair's height higher again.
+            const int bh   = Squachy::bubbleHeight(t, BOOT_LINES[s_bootLineIdx]);
+            const int band = (h - 21) - (bh + 8) - (sy + 16);   // feet, bubble, subtitle
+            bootScale = (float)(band - 6) / 68.0f;
+            // The cap is the width, not a constant: about 70 units across with
+            // his wave, so a tall portrait screen grows him into its sky
+            // instead of leaving it empty above a small figure.
+            const float widest = (float)(w - 16) / 70.0f;
+            if (bootScale < 1.4f) bootScale = 1.4f;
+            if (bootScale > widest) bootScale = widest;
+            gap = bh + 8 + (int)(10.0f * bootScale);
+        } else if (w >= 400) {
             const int band = (h - 21) - 34 - (sy + 16);   // feet, bubble, subtitle
             bootScale = (float)(band - 10) / 58.0f;       // 10 rows of air at the top
             if (bootScale < 1.95f) bootScale = 1.95f;
             if (bootScale > 3.2f)  bootScale = 3.2f;
         }
-        Squachy::drawWaving(t, w / 2, h - 21, now, bootScale, BOOT_LINES[s_bootLineIdx]);
+        Squachy::drawWaving(t, w / 2, h - 21, now, bootScale, BOOT_LINES[s_bootLineIdx],
+                            false, 0, true, gap);
+        Squachy::setBubbleSmall(false);
     }
 
     // INITIALIZING...  vX.Y.Z -- version tacked onto this line rather
@@ -241,12 +267,14 @@ void uiBootTick(TFT_eSPI& t, uint32_t now) {
 #else
     snprintf(init, sizeof(init), "INITIALIZING...  %s", FIRMWARE_VERSION);
 #endif
+    Theme::bodyFontOn(t);
     int iw = t.textWidth(init);
-    t.setCursor((w - iw) / 2, h - 16);
+    t.setCursor((w - iw) / 2, h - t.fontHeight() - 8);
 #if defined(CYD35)
     t.setTextColor(Theme::AMBER);   // not the cyan the rest of the line uses
 #endif
     t.print(init);
+    Theme::bodyFontOff(t);
 
     // animated scanline sweeping top to bottom every 600 ms
     int phase = (int)((now / 600) % (uint32_t)h);

@@ -5,6 +5,7 @@
 #include "privacy.h"
 #include "squachy.h"
 #include "settings.h"
+#include "ignore_list.h"
 #include <Arduino.h>
 
 static int g_scroll = 0;
@@ -157,9 +158,26 @@ static void rowLayout(TFT_eSPI& t, int w, int h, int& bodyTop, int& bodyBottom, 
     // correctly reads back whatever font+size is currently active.
     t.setTextSize(2);
     int nameH = t.fontHeight();
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);           // the detail line's face
     int detailH = t.fontHeight();
+    Theme::bodyFontOff(t);
     rowH = 1 /* topPad */ + nameH + detailH + 2;
+}
+
+// Persistent per-row target state. Keep these as separate colored words
+// instead of folding them into the MAC/channel text so WATCH, HUNT and
+// IGNORE can be visible at the same time.
+static void drawTargetFlags(TFT_eSPI& t, int x, int y,
+                            bool watched, bool hunted, bool ignored) {
+    auto flag = [&](const char* label, uint16_t color) {
+        t.setTextColor(color, Theme::BG);
+        t.setCursor(x, y);
+        t.print(label);
+        x += t.textWidth(label) + 8;
+    };
+    if (watched) flag("WATCH",  Theme::CYAN);
+    if (hunted)  flag("HUNT",   Theme::VAPOR_PINK);
+    if (ignored) flag("IGNORE", Theme::AMBER);
 }
 
 // Row index (0 = topmost visible, adjusted for current scroll) a tap
@@ -276,11 +294,12 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         if (isBle) {
             char sub[24];
             snprintf(sub, sizeof(sub), "%u found so far", (unsigned)eng.rawBleCount());
-            t.setTextSize(1);
+            Theme::bodyFontOn(t);
             t.setTextColor(Theme::CYAN, Theme::BG);
             int sw = t.textWidth(sub);
             t.setCursor((w - sw) / 2, bodyTop + bodyH / 3 + 35);
             t.print(sub);
+            Theme::bodyFontOff(t);
         }
 
         drawBottomBar(t, w, h, isBle);
@@ -324,18 +343,23 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
         if (isBle) {
             const RawBleResult* r = eng.rawBleAt(idx);
             if (!r) break;
+            Theme::bodyFontOff(t);
             t.setTextSize(2);
             t.setTextColor(Theme::CYAN, Theme::BG);
             t.setCursor(4, y + topPad);
             char pv[40];
             t.print(r->name[0] ? Privacy::name(r->name, pv, sizeof pv) : "(unnamed)");
 
-            t.setTextSize(1);
+            Theme::bodyFontOn(t);
             t.setTextColor(Theme::WHITE, Theme::BG);
             char mac[24];
             Privacy::mac(mac, sizeof mac, r->mac);
             t.setCursor(4, y + detailY);
             t.print(mac);
+            drawTargetFlags(t, 4 + t.textWidth(mac) + 8, y + detailY,
+                            eng.isWatched(r->mac, true),
+                            eng.isHunted(r->mac, true),
+                            IgnoreList::contains(r->mac));
 
             t.setTextColor(Theme::VAPOR_PURPLE, Theme::BG);
             char rssi[12];
@@ -353,13 +377,14 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
                 else if (d <= -4) t.fillTriangle(ax, ay, ax + 6, ay, ax + 3, ay + 6, Theme::RED);
             }
         } else {
+            Theme::bodyFontOff(t);
             t.setTextSize(2);
             t.setTextColor(Theme::CYAN, Theme::BG);
             t.setCursor(4, y + topPad);
             char pv[40];
             t.print(Privacy::name(eng.rawWifiSsid(idx), pv, sizeof pv));
 
-            t.setTextSize(1);
+            Theme::bodyFontOn(t);
             t.setTextColor(Theme::WHITE, Theme::BG);
             char line[24];
 #if SQW_WIFI_5G
@@ -372,6 +397,11 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
                      eng.rawWifiOpen(idx) ? "OPEN" : "LOCKED");
             t.setCursor(4, y + detailY);
             t.print(line);
+            const uint8_t* bssid = eng.rawWifiBssid(idx);
+            drawTargetFlags(t, 4 + t.textWidth(line) + 8, y + detailY,
+                            bssid && eng.isWatched(bssid, false),
+                            bssid && eng.isHunted(bssid, false),
+                            bssid && IgnoreList::contains(bssid));
 
             t.setTextColor(Theme::VAPOR_PURPLE, Theme::BG);
             char rssi[12];
@@ -383,6 +413,7 @@ if (!Theme::stillBackdrop(t)) switch (Settings::background()) {
 
         y += rowH;
     }
+    Theme::bodyFontOff(t);
 
     Theme::drawScrollbar(t, w - 4, bodyTop, bodyH, count, max, g_scroll);
 

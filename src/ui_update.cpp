@@ -13,11 +13,12 @@ namespace {
 
 bool s_askSwitch = false;
 
-const int BTN_H   = 28;
 const int SLOP    = 6;
-const int ROW_Y0  = 36;
-const int ROW_H   = 24;
 const int ROW_GAP = 3;
+// A size up on the large panels, where the text is the 16-row body font.
+int btnH()  { return Theme::dialogBtnH(28); }
+int rowY0() { return Theme::large() ? 44 : 36; }
+int rowH()  { return Theme::large() ? 30 : 24; }
 
 // One place for every button position, shared by drawing and hit testing so
 // the two cannot drift apart.
@@ -31,22 +32,22 @@ Geom geom(TFT_eSPI& t) {
     const int w = t.width(), h = t.height();
     Geom g;
     g.w = w - 32;
-    if (g.w > 230) g.w = 230;
+    if (g.w > (Theme::large() ? 300 : 230)) g.w = Theme::large() ? 300 : 230;
     g.x     = (w - g.w) / 2;
-    g.backW = 110;
+    g.backW = Theme::large() ? 140 : 110;
     g.backX = (w - g.backW) / 2;
-    g.backY = h - BTN_H - 6;
-    g.switchY = g.backY - BTN_H - 8;
-    g.squadY  = OtaCore::otherVersion() ? g.switchY - BTN_H - 8 : g.switchY;
+    g.backY = h - btnH() - 6;
+    g.switchY = g.backY - btnH() - 8;
+    g.squadY  = OtaCore::otherVersion() ? g.switchY - btnH() - 8 : g.switchY;
     // Stacked upward from SQUAD: Bluetooth only where the board has it (the
     // CYDs dropped it; see nimble_flags_cyd), and WiFi takes its place.
 #if SQUACH_MESH
-    int above = g.squadY - BTN_H - 8;
+    int above = g.squadY - btnH() - 8;
 #else
     int above = g.squadY;
 #endif
     g.btY     = above;
-    if (OtaBle::available()) above -= BTN_H + 8;
+    if (OtaBle::available()) above -= btnH() + 8;
     g.wifiY   = above;
     return g;
 }
@@ -59,10 +60,10 @@ Row bottomRow(TFT_eSPI& t, int n) {
     r.n = n;
     const int gap = 8, total = t.width() - 16;
     r.w = (total - (n - 1) * gap) / n;
-    if (r.w > 110) r.w = 110;
+    if (r.w > (Theme::large() ? 140 : 110)) r.w = Theme::large() ? 140 : 110;
     const int span = n * r.w + (n - 1) * gap;
     for (int i = 0; i < n; i++) r.x[i] = (t.width() - span) / 2 + i * (r.w + gap);
-    r.y = t.height() - BTN_H - 6;
+    r.y = t.height() - btnH() - 6;
     return r;
 }
 
@@ -72,15 +73,15 @@ Panel panel(TFT_eSPI& t) {
     const int w = t.width(), h = t.height();
     Panel p;
     p.w = w - 24;
-    if (p.w > 270) p.w = 270;
-    p.h    = 112;
+    if (p.w > (Theme::large() ? 340 : 270)) p.w = Theme::large() ? 340 : 270;
+    p.h    = Theme::large() ? 140 : 112;
     p.x    = (w - p.w) / 2;
     p.y    = (h - p.h) / 2;
-    p.btnW = 92;
+    p.btnW = Theme::large() ? 120 : 92;
     const int gap = 14;
     p.yesX = p.x + (p.w - (p.btnW * 2 + gap)) / 2;
     p.noX  = p.yesX + p.btnW + gap;
-    p.btnY = p.y + p.h - BTN_H - 10;
+    p.btnY = p.y + p.h - btnH() - 10;
     return p;
 }
 
@@ -129,7 +130,7 @@ void pair(TFT_eSPI& t, int y, const char* k, const char* v) {
 
 void backButton(TFT_eSPI& t, const char* lab) {
     const Geom g = geom(t);
-    Theme::drawWin95Button(t, g.backX, g.backY, g.backW, BTN_H, lab, false);
+    Theme::drawWin95Button(t, g.backX, g.backY, g.backW, btnH(), lab, false);
 }
 
 void drawBar(TFT_eSPI& t, int y, uint8_t pct) {
@@ -152,16 +153,16 @@ void drawMenu(TFT_eSPI& t) {
     const char* other = OtaCore::otherVersion();
     pair(t, y, "OTHER SLOT", other ? other : "nothing to switch to");
 
-    Theme::drawWin95Button(t, g.x, g.wifiY, g.w, BTN_H, "UPDATE OVER WIFI", false);
+    Theme::drawWin95Button(t, g.x, g.wifiY, g.w, btnH(), "UPDATE OVER WIFI", false);
     if (OtaBle::available())
-        Theme::drawWin95Button(t, g.x, g.btY,   g.w, BTN_H, "UPDATE OVER BLUETOOTH (BETA)", false);
+        Theme::drawWin95Button(t, g.x, g.btY,   g.w, btnH(), "UPDATE OVER BLUETOOTH (BETA)", false);
 #if SQUACH_MESH
-    Theme::drawWin95Button(t, g.x, g.squadY, g.w, BTN_H, "UPDATE SQUAD", false);
+    Theme::drawWin95Button(t, g.x, g.squadY, g.w, btnH(), "UPDATE SQUAD", false);
 #endif
     if (other) {
         char b[40];
         snprintf(b, sizeof b, "SWITCH TO %.20s", other);
-        Theme::drawWin95Button(t, g.x, g.switchY, g.w, BTN_H, b, false);
+        Theme::drawWin95Button(t, g.x, g.switchY, g.w, btnH(), b, false);
     }
     backButton(t, "BACK");
 }
@@ -184,8 +185,8 @@ void drawSwitchPanel(TFT_eSPI& t) {
     t.setCursor(p.x + (p.w - t.textWidth(l1)) / 2, y); t.print(l1);
     y += lineH(t);
     t.setCursor(p.x + (p.w - t.textWidth(l2)) / 2, y); t.print(l2);
-    Theme::drawWin95Button(t, p.yesX, p.btnY, p.btnW, BTN_H, "SWITCH", false);
-    Theme::drawWin95Button(t, p.noX,  p.btnY, p.btnW, BTN_H, "CANCEL", false);
+    Theme::drawWin95Button(t, p.yesX, p.btnY, p.btnW, btnH(), "SWITCH", false);
+    Theme::drawWin95Button(t, p.noX,  p.btnY, p.btnW, btnH(), "CANCEL", false);
 }
 
 // ---- shared progress screens --------------------------------------------------
@@ -258,10 +259,10 @@ void drawBtWaiting(TFT_eSPI& t, bool connected) {
     char code[16];
     const uint32_t c = OtaBle::pairingCode();
     snprintf(code, sizeof code, "%03lu %03lu", (unsigned long)(c / 1000), (unsigned long)(c % 1000));
-    t.setTextSize(3);
+    t.setTextFont(1); t.setTextSize(Theme::upSize(3));
     centred(t, y, Theme::VAPOR_PINK, code);
     y += t.fontHeight() + 6;
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);
     if (y < g.backY - lineH(t) - 2) centred(t, y, Theme::W95_SHADOW, "Detection is paused on this screen.");
     backButton(t, "CANCEL");
 }
@@ -273,8 +274,8 @@ void drawFailed(TFT_eSPI& t, const char* words, bool canRetry) {
     para(t, y, Theme::WHITE, words);
     if (canRetry) {
         const Row r = bottomRow(t, 2);
-        Theme::drawWin95Button(t, r.x[0], r.y, r.w, BTN_H, "TRY AGAIN", false);
-        Theme::drawWin95Button(t, r.x[1], r.y, r.w, BTN_H, "DONE", false);
+        Theme::drawWin95Button(t, r.x[0], r.y, r.w, btnH(), "TRY AGAIN", false);
+        Theme::drawWin95Button(t, r.x[1], r.y, r.w, btnH(), "DONE", false);
     } else {
         backButton(t, "OK");
     }
@@ -299,7 +300,7 @@ void drawBt(TFT_eSPI& t) {
 
 int pickRowCount(TFT_eSPI& t) {
     const int bottom = bottomRow(t, 1).y - 6;
-    int n = (bottom - ROW_Y0) / (ROW_H + ROW_GAP);
+    int n = (bottom - rowY0()) / (rowH() + ROW_GAP);
     if (n > OtaWifi::netCount()) n = OtaWifi::netCount();
     return n < 0 ? 0 : n;
 }
@@ -317,13 +318,13 @@ void drawPick(TFT_eSPI& t) {
     label(t, 22, Theme::VAPOR_PINK, "PICK YOUR WIFI");
     const int n = pickRowCount(t);
     if (!OtaWifi::netCount()) {
-        para(t, ROW_Y0 + 4, Theme::WHITE, "No networks found. Move closer to the router and press RESCAN.");
+        para(t, rowY0() + 4, Theme::WHITE, "No networks found. Move closer to the router and press RESCAN.");
     }
     for (int i = 0; i < n; i++) {
         const OtaWifi::Net* net = OtaWifi::net((uint8_t)i);
-        const int y = ROW_Y0 + i * (ROW_H + ROW_GAP);
-        t.fillRect(8, y, w - 16, ROW_H, Theme::TASKBAR);
-        t.drawRect(8, y, w - 16, ROW_H, Theme::VAPOR_PURPLE);
+        const int y = rowY0() + i * (rowH() + ROW_GAP);
+        t.fillRect(8, y, w - 16, rowH(), Theme::TASKBAR);
+        t.drawRect(8, y, w - 16, rowH(), Theme::VAPOR_PURPLE);
         const bool saved = OtaWifi::savedIndexOf(net->ssid) >= 0;
         const char* tag = saved ? "SAVED" : (net->open ? "OPEN" : "");
         const int tagW = tag[0] ? t.textWidth(tag) + 6 : 0;
@@ -332,18 +333,18 @@ void drawPick(TFT_eSPI& t) {
         char pv[40];
         snprintf(name, sizeof name, "%.*s", maxChars > 32 ? 32 : maxChars, Privacy::name(net->ssid, pv, sizeof pv));
         t.setTextColor(Theme::WHITE, Theme::TASKBAR);
-        t.setCursor(14, y + (ROW_H - t.fontHeight()) / 2);
+        t.setCursor(14, y + (rowH() - t.fontHeight()) / 2);
         t.print(name);
         if (tag[0]) {
             t.setTextColor(saved ? Theme::CYAN : Theme::AMBER, Theme::TASKBAR);
-            t.setCursor(w - 16 - 20 - tagW, y + (ROW_H - t.fontHeight()) / 2);
+            t.setCursor(w - 16 - 20 - tagW, y + (rowH() - t.fontHeight()) / 2);
             t.print(tag);
         }
-        signalBars(t, w - 16 - 16, y + ROW_H - 5, net->rssi);
+        signalBars(t, w - 16 - 16, y + rowH() - 5, net->rssi);
     }
     const Row r = bottomRow(t, 2);
-    Theme::drawWin95Button(t, r.x[0], r.y, r.w, BTN_H, "RESCAN", false);
-    Theme::drawWin95Button(t, r.x[r.n - 1], r.y, r.w, BTN_H, "CANCEL", false);
+    Theme::drawWin95Button(t, r.x[0], r.y, r.w, btnH(), "RESCAN", false);
+    Theme::drawWin95Button(t, r.x[r.n - 1], r.y, r.w, btnH(), "CANCEL", false);
 }
 
 void drawReady(TFT_eSPI& t) {
@@ -359,7 +360,7 @@ void drawReady(TFT_eSPI& t) {
     para(t, y, Theme::W95_SHADOW, "Bluetooth and detection stay off until the board restarts.");
     char b[40];
     snprintf(b, sizeof b, "%s %.20s", same ? "REINSTALL" : "INSTALL", OtaWifi::latestVersion());
-    Theme::drawWin95Button(t, g.x, g.switchY, g.w, BTN_H, b, false);
+    Theme::drawWin95Button(t, g.x, g.switchY, g.w, btnH(), b, false);
     backButton(t, "CANCEL");
 }
 
@@ -409,10 +410,19 @@ void uiUpdateInit(TFT_eSPI& t) {
 
 void uiUpdateAskSwitch(bool ask) { s_askSwitch = ask; }
 
+static void tickBody(TFT_eSPI& t, bool full);
+
+// The body font is on for the whole tick and off again on every way out, so
+// whatever draws next starts from the system font it expects.
 void uiUpdateTick(TFT_eSPI& t, uint32_t now, bool full) {
     (void)now;
+    Theme::bodyFontOn(t);
+    tickBody(t, full);
+    Theme::bodyFontOff(t);
+}
+
+static void tickBody(TFT_eSPI& t, bool full) {
     if (!full) {
-        t.setTextSize(1);
         t.setTextWrap(false);
         if (OtaWifi::state() == OtaWifi::State::DOWNLOADING)
             progressLive(t, OtaWifi::bytesReceived(), OtaWifi::bytesExpected(), OtaWifi::percent());
@@ -422,7 +432,7 @@ void uiUpdateTick(TFT_eSPI& t, uint32_t now, bool full) {
     }
     t.fillRect(0, 0, t.width(), t.height(), Theme::BG);
     Theme::drawTitleBar(t, ">> UPDATE FIRMWARE <<");
-    t.setTextSize(1);
+    Theme::bodyFontOn(t);   // the title bar leaves the system font behind
     t.setTextWrap(false);
 
     const bool wifiOn = OtaWifi::state() != OtaWifi::State::OFF;
@@ -447,7 +457,7 @@ void uiUpdateTick(TFT_eSPI& t, uint32_t now, bool full) {
 UpdateHit uiUpdateHitTest(TFT_eSPI& t, int x, int y, int* netIndex) {
     if (OtaCore::restartPending()) return UpdateHit::NONE;
     const Geom g = geom(t);
-    const bool onBack = in(x, y, g.backX, g.backY, g.backW, BTN_H);
+    const bool onBack = in(x, y, g.backX, g.backY, g.backW, btnH());
 
     const OtaWifi::State ws = OtaWifi::state();
     if (ws != OtaWifi::State::OFF) {
@@ -455,25 +465,25 @@ UpdateHit uiUpdateHitTest(TFT_eSPI& t, int x, int y, int* netIndex) {
             case OtaWifi::State::PICK: {
                 const int n = pickRowCount(t);
                 for (int i = 0; i < n; i++) {
-                    const int ry = ROW_Y0 + i * (ROW_H + ROW_GAP);
-                    if (y >= ry && y < ry + ROW_H + ROW_GAP && x >= 8 && x <= t.width() - 8) {
+                    const int ry = rowY0() + i * (rowH() + ROW_GAP);
+                    if (y >= ry && y < ry + rowH() + ROW_GAP && x >= 8 && x <= t.width() - 8) {
                         if (netIndex) *netIndex = i;
                         return UpdateHit::NETWORK;
                     }
                 }
                 const Row r = bottomRow(t, 2);
-                if (in(x, y, r.x[0], r.y, r.w, BTN_H)) return UpdateHit::RESCAN;
-                if (in(x, y, r.x[r.n - 1], r.y, r.w, BTN_H)) return UpdateHit::CANCEL;
+                if (in(x, y, r.x[0], r.y, r.w, btnH())) return UpdateHit::RESCAN;
+                if (in(x, y, r.x[r.n - 1], r.y, r.w, btnH())) return UpdateHit::CANCEL;
                 return UpdateHit::NONE;
             }
             case OtaWifi::State::READY:
-                if (in(x, y, g.x, g.switchY, g.w, BTN_H)) return UpdateHit::INSTALL;
+                if (in(x, y, g.x, g.switchY, g.w, btnH())) return UpdateHit::INSTALL;
                 return onBack ? UpdateHit::CANCEL : UpdateHit::NONE;
             case OtaWifi::State::FAILED:
                 if (OtaWifi::canTryAgain()) {
                     const Row r = bottomRow(t, 2);
-                    if (in(x, y, r.x[0], r.y, r.w, BTN_H)) return UpdateHit::TRY_AGAIN;
-                    if (in(x, y, r.x[1], r.y, r.w, BTN_H)) return UpdateHit::OK;
+                    if (in(x, y, r.x[0], r.y, r.w, btnH())) return UpdateHit::TRY_AGAIN;
+                    if (in(x, y, r.x[1], r.y, r.w, btnH())) return UpdateHit::OK;
                     return UpdateHit::NONE;
                 }
                 return onBack ? UpdateHit::OK : UpdateHit::NONE;
@@ -491,16 +501,16 @@ UpdateHit uiUpdateHitTest(TFT_eSPI& t, int x, int y, int* netIndex) {
         case OtaBle::State::OFF:
             if (s_askSwitch) {
                 const Panel p = panel(t);
-                if (in(x, y, p.yesX, p.btnY, p.btnW, BTN_H)) return UpdateHit::SWITCH_CONFIRM;
-                if (in(x, y, p.noX,  p.btnY, p.btnW, BTN_H)) return UpdateHit::SWITCH_CANCEL;
+                if (in(x, y, p.yesX, p.btnY, p.btnW, btnH())) return UpdateHit::SWITCH_CONFIRM;
+                if (in(x, y, p.noX,  p.btnY, p.btnW, btnH())) return UpdateHit::SWITCH_CANCEL;
                 return UpdateHit::NONE;
             }
-            if (in(x, y, g.x, g.wifiY, g.w, BTN_H)) return UpdateHit::WIFI_START;
-            if (OtaBle::available() && in(x, y, g.x, g.btY, g.w, BTN_H)) return UpdateHit::BT_START;
+            if (in(x, y, g.x, g.wifiY, g.w, btnH())) return UpdateHit::WIFI_START;
+            if (OtaBle::available() && in(x, y, g.x, g.btY, g.w, btnH())) return UpdateHit::BT_START;
 #if SQUACH_MESH
-            if (in(x, y, g.x, g.squadY, g.w, BTN_H)) return UpdateHit::SQUAD_START;
+            if (in(x, y, g.x, g.squadY, g.w, btnH())) return UpdateHit::SQUAD_START;
 #endif
-            if (OtaCore::otherVersion() && in(x, y, g.x, g.switchY, g.w, BTN_H)) return UpdateHit::SWITCH;
+            if (OtaCore::otherVersion() && in(x, y, g.x, g.switchY, g.w, btnH())) return UpdateHit::SWITCH;
             return onBack ? UpdateHit::BACK : UpdateHit::NONE;
         case OtaBle::State::WAITING:
         case OtaBle::State::CONNECTED:
