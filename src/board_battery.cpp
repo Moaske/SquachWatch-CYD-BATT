@@ -96,8 +96,12 @@ void sample(uint32_t now, bool first) {
     // after a WiFi burst does not make it wander up and down. It is allowed
     // up again after external power (or at boot), and by a clear jump
     // (a fresh cell, say).
-    const uint8_t est = curvePct(s_mv);
-    if (first || wasExt || est < s_pct || est > s_pct + 10) s_pct = est;
+    // On external power the reading is the charger's 4.5 V, not the cell, so
+    // the percent is left where it was (the gauge shows it with "charging").
+    if (!s_ext) {
+        const uint8_t est = curvePct(s_mv);
+        if (first || wasExt || est < s_pct || est > s_pct + 10) s_pct = est;
+    }
 
     if (first) {
         s_logAt = now;
@@ -160,6 +164,13 @@ Event takeEvent() {
     const Event e = s_event;
     s_event = Event::NONE;
     return e;
+}
+
+bool gauge(uint8_t& pct, bool& charging) {
+    if (!s_begun || !s_present) return false;
+    pct      = s_pct;
+    charging = s_ext;
+    return true;
 }
 
 bool     present() { return s_present; }

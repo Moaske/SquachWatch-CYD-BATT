@@ -45,6 +45,12 @@ bool     ext();       // external power (reading above any cell)
 uint16_t mv();        // the filtered reading at BAT+, in mV
 uint8_t  pct();       // estimated charge, 0..100; meaningless while ext()
 
+// For the home screen's lava-lamp gauge (uiClearSetBatterySource): false
+// with nothing on BAT+. On external power the charge itself cannot be seen
+// (SYS sits at 4.5 V), so the lamp keeps the last percent read on the cell
+// and runs its "charging" animation.
+bool     gauge(uint8_t& pct, bool& charging);
+
 void     printNow();  // BATT on the console
 void     printLog();  // BATTLOG on the console: the black box's samples, newest first
 void     noteSample(uint8_t why);   // one sample into the black box now

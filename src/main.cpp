@@ -4873,6 +4873,7 @@ void setup() {
     }
 #if defined(BOARD_BATT_PIN)
     BoardBattery::begin();   // after the black box, so its boot sample is kept
+    uiClearSetBatterySource(BoardBattery::gauge);   // the lava lamp on the home screen
 #endif
 #if SQW_SPEAKER
     bootStage(3);
